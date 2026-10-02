@@ -1,0 +1,150 @@
+"""MCP tool registration (simple mode: 2-3 generic tools).
+
+Tool surface mirrors the "GraphQL as the MCP contract" pattern: a small,
+constant number of tools; agents compose freely against the schema.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from graphql import parse
+from graphql.language import OperationDefinitionNode, OperationType
+
+from routerql.mcp.errors import (
+    RouterQLErrors,
+    create_error_response,
+    create_success_response,
+)
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
+
+    from routerql.handler import RouterGraphQLHandler
+
+_HINT_AFTER_SCHEMA = (
+    "Write a GraphQL query against this schema and run it with graphql_query."
+)
+
+
+def _document_matches(document: str, *, mutation: bool) -> bool:
+    """True if every operation in the document is of the requested kind."""
+    try:
+        ast = parse(document)
+    except Exception:
+        return True  # let graphql() produce the parse error
+    operations = [
+        d.operation for d in ast.definitions if isinstance(d, OperationDefinitionNode)
+    ]
+    if not operations:
+        return True  # fragments only / anonymous — graphql() will complain
+    expected = OperationType.MUTATION if mutation else OperationType.QUERY
+    return all(op == expected for op in operations)
+
+
+def register_simple_tools(
+    mcp: FastMCP, handler: RouterGraphQLHandler, *, allow_mutation: bool
+) -> None:
+    """Register get_schema + graphql_query (+ graphql_mutation) on a FastMCP."""
+
+    @mcp.tool()
+    def get_schema() -> dict[str, Any]:
+        """Get the complete GraphQL schema of this FastAPI app, in SDL format.
+
+        This is the single discovery entry point. Every Query field maps to a
+        GET route and every Mutation field (if present) to a write route:
+        ``get_items_by_item_id(item_id: Int!): ItemOut`` comes from
+        ``GET /items/{item_id}``. Read this before writing any query — the
+        field signatures here are authoritative.
+
+        Responses are nullable per field: a route error nulls only its own
+        field, so several routes can be combined in one query safely.
+
+        Returns:
+            dict with:
+            - success: True
+            - data: {"sdl": "<GraphQL SDL string>"}
+            - hint: how to proceed next
+        """
+        try:
+            return create_success_response({"sdl": handler.get_sdl()}, hint=_HINT_AFTER_SCHEMA)
+        except Exception as e:  # pragma: no cover - defensive
+            return create_error_response(str(e), RouterQLErrors.INTERNAL_ERROR)
+
+    @mcp.tool()
+    async def graphql_query(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Execute a GraphQL query against the app's routes.
+
+        Args:
+            query: A GraphQL query document, e.g.
+                ``"{ get_items(limit: 5) { id name } }"``.
+            variables: Optional variables for the query document, e.g.
+                ``{"id": 3}`` used as ``$id``.
+
+        Each top-level field calls the matching FastAPI route in-process —
+        authentication and dependencies apply exactly as over HTTP.
+
+        Returns:
+            dict with:
+            - success: True and data: the GraphQL result (``{"data": ...}``
+              plus ``errors`` when fields failed), or
+            - success: False and error/error_type for invalid queries.
+        """
+        return await _execute(handler, query, variables, mutation=False)
+
+    if allow_mutation:
+
+        @mcp.tool()
+        async def graphql_mutation(
+            mutation: str, variables: dict[str, Any] | None = None
+        ) -> dict[str, Any]:
+            """Execute a GraphQL mutation against the app's write routes.
+
+            Args:
+                mutation: A GraphQL mutation document, e.g.
+                    ``'mutation { create_items(payload: {name: "n"}) { id } }'``.
+                variables: Optional variables for the mutation document.
+
+            Returns:
+                Same envelope as graphql_query.
+            """
+            return await _execute(handler, mutation, variables, mutation=True)
+
+
+async def _execute(
+    handler: RouterGraphQLHandler,
+    document: str,
+    variables: dict[str, Any] | None,
+    *,
+    mutation: bool,
+) -> dict[str, Any]:
+    if not _document_matches(document, mutation=mutation):
+        return create_error_response(
+            f"graphql_query only accepts query documents; "
+            f"{'queries' if mutation else 'mutations'} must go through "
+            f"{'graphql_query' if mutation else 'graphql_mutation'}",
+            RouterQLErrors.MUTATION_DISABLED if not mutation
+            else RouterQLErrors.INVALID_QUERY,
+            hint="Send the document to the matching tool.",
+        )
+    try:
+        result = await handler.execute(document, variables=variables)
+    except Exception as e:  # pragma: no cover - defensive
+        return create_error_response(str(e), RouterQLErrors.INTERNAL_ERROR)
+
+    errors = result.get("errors")
+    if errors and "data" not in result:
+        # Whole-document failure: parse/validation level.
+        kind = (
+            RouterQLErrors.MUTATION_EXECUTION_ERROR
+            if mutation
+            else RouterQLErrors.QUERY_EXECUTION_ERROR
+        )
+        return create_error_response(
+            "; ".join(e.get("message", "") for e in errors),
+            kind,
+            hint="Call get_schema and check the field names, argument types "
+            "and operation type.",
+        )
+    # Partial or full success (field-level errors stay inside data envelope).
+    return create_success_response(result)

@@ -130,8 +130,16 @@ class RouteInvoker:
         self._closed = False
 
     @property
+    def app(self) -> Any:
+        return self._app
+
+    @property
     def manage_lifespan(self) -> bool:
         return self._manage_lifespan
+
+    def disable_lifespan_management(self) -> None:
+        """Stop managing the app lifespan (when the host server runs it)."""
+        self._manage_lifespan = False
 
     async def start(self) -> None:
         """Idempotently start the lifespan (when managed) and the HTTP client."""
