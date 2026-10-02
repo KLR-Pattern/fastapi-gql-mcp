@@ -54,9 +54,11 @@ class RouterMCP:
             mutations. Default False (read-only).
         headers_provider: Callable (sync or async) returning headers merged
             into every route call — inject credentials here.
-        mode: ``simple`` registers get_schema + graphql_query; ``progressive``
-            (tag-based disclosure) lands in P2; ``auto`` currently resolves to
-            ``simple``.
+        mode: ``simple`` registers get_schema + graphql_query;
+            ``progressive`` registers the 4-layer tag-based disclosure
+            (list_domains -> list_queries -> get_query_schema ->
+            graphql_query); ``auto`` picks progressive once the app exceeds
+            ``progressive_threshold`` routes.
         include_hidden: Also scan routes with ``include_in_schema=False``.
     """
 
@@ -71,9 +73,10 @@ class RouterMCP:
         headers_provider: HeadersProvider | None = None,
         mode: Literal["auto", "simple", "progressive"] = "auto",
         include_hidden: bool = False,
+        progressive_threshold: int = PROGRESSIVE_THRESHOLD,
     ) -> None:
         self._mode = mode
-        resolved = self._resolve_mode(mode, app)
+        self._progressive_threshold = progressive_threshold
         self._handler = RouterGraphQLHandler(
             app,
             include=include,
@@ -82,40 +85,48 @@ class RouterMCP:
             headers_provider=headers_provider,
             include_hidden=include_hidden,
         )
+        self._resolved_mode = self._resolve_mode(mode, app)
         self._domains = DomainRegistry(self._handler.routes)
-        self._mcp = self._build_mcp(name, resolved, allow_mutation)
+        self._mcp = self._build_mcp(name, allow_mutation)
 
-    @staticmethod
     def _resolve_mode(
-        mode: Literal["auto", "simple", "progressive"], app: FastAPI
+        self, mode: Literal["auto", "simple", "progressive"], app: FastAPI
     ) -> Literal["simple", "progressive"]:
-        if mode == "progressive":
-            raise NotImplementedError(
-                "progressive disclosure (list_domains / list_queries / "
-                "get_query_schema) lands in P2"
-            )
-        if mode == "auto":
-            from fastapi.routing import APIRoute
-
-            route_count = sum(1 for r in app.routes if isinstance(r, APIRoute))
-            if route_count > PROGRESSIVE_THRESHOLD:
-                logger.info(
-                    "App has %d routes (> %d): progressive disclosure would be "
-                    "beneficial; using simple mode until P2 lands",
-                    route_count,
-                    PROGRESSIVE_THRESHOLD,
-                )
+        if mode == "simple":
             return "simple"
+        if mode == "progressive":
+            return "progressive"
+        # auto: progressive disclosure pays off once the SDL is too big to
+        # hand an agent in one shot.
+        from fastapi.routing import APIRoute
+
+        route_count = sum(1 for r in app.routes if isinstance(r, APIRoute))
+        if route_count > self._progressive_threshold:
+            logger.info(
+                "App has %d routes (> %d): using progressive disclosure",
+                route_count,
+                self._progressive_threshold,
+            )
+            return "progressive"
         return "simple"
 
-    def _build_mcp(
-        self, name: str, resolved: Literal["simple", "progressive"], allow_mutation: bool
-    ) -> Any:
+    @property
+    def mode(self) -> Literal["simple", "progressive"]:
+        return self._resolved_mode
+
+    def _build_mcp(self, name: str, allow_mutation: bool) -> Any:
         # fastmcp is an optional extra; import lazily like nexusx does.
         from fastmcp import FastMCP
 
         mcp = FastMCP(name)
-        register_simple_tools(mcp, self._handler, allow_mutation=allow_mutation)
+        if self._resolved_mode == "progressive":
+            from routerql.mcp.progressive_tools import register_progressive_tools
+
+            register_progressive_tools(
+                mcp, self._handler, self._domains, allow_mutation=allow_mutation
+            )
+        else:
+            register_simple_tools(mcp, self._handler, allow_mutation=allow_mutation)
         return mcp
 
     @property

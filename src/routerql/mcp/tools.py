@@ -1,4 +1,4 @@
-"""MCP tool registration (simple mode: 2-3 generic tools).
+"""MCP tool registration: executor tools + the simple-mode discovery tool.
 
 Tool surface mirrors the "GraphQL as the MCP contract" pattern: a small,
 constant number of tools; agents compose freely against the schema.
@@ -27,49 +27,10 @@ _HINT_AFTER_SCHEMA = (
 )
 
 
-def _document_matches(document: str, *, mutation: bool) -> bool:
-    """True if every operation in the document is of the requested kind."""
-    try:
-        ast = parse(document)
-    except Exception:
-        return True  # let graphql() produce the parse error
-    operations = [
-        d.operation for d in ast.definitions if isinstance(d, OperationDefinitionNode)
-    ]
-    if not operations:
-        return True  # fragments only / anonymous — graphql() will complain
-    expected = OperationType.MUTATION if mutation else OperationType.QUERY
-    return all(op == expected for op in operations)
-
-
-def register_simple_tools(
+def register_executor_tools(
     mcp: FastMCP, handler: RouterGraphQLHandler, *, allow_mutation: bool
 ) -> None:
-    """Register get_schema + graphql_query (+ graphql_mutation) on a FastMCP."""
-
-    @mcp.tool()
-    def get_schema() -> dict[str, Any]:
-        """Get the complete GraphQL schema of this FastAPI app, in SDL format.
-
-        This is the single discovery entry point. Every Query field maps to a
-        GET route and every Mutation field (if present) to a write route:
-        ``get_items_by_item_id(item_id: Int!): ItemOut`` comes from
-        ``GET /items/{item_id}``. Read this before writing any query — the
-        field signatures here are authoritative.
-
-        Responses are nullable per field: a route error nulls only its own
-        field, so several routes can be combined in one query safely.
-
-        Returns:
-            dict with:
-            - success: True
-            - data: {"sdl": "<GraphQL SDL string>"}
-            - hint: how to proceed next
-        """
-        try:
-            return create_success_response({"sdl": handler.get_sdl()}, hint=_HINT_AFTER_SCHEMA)
-        except Exception as e:  # pragma: no cover - defensive
-            return create_error_response(str(e), RouterQLErrors.INTERNAL_ERROR)
+    """Register graphql_query (+ graphql_mutation) on a FastMCP."""
 
     @mcp.tool()
     async def graphql_query(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -111,6 +72,53 @@ def register_simple_tools(
             return await _execute(handler, mutation, variables, mutation=True)
 
 
+def register_simple_tools(
+    mcp: FastMCP, handler: RouterGraphQLHandler, *, allow_mutation: bool
+) -> None:
+    """Register get_schema + executor tools (small apps, one-shot discovery)."""
+
+    @mcp.tool()
+    def get_schema() -> dict[str, Any]:
+        """Get the complete GraphQL schema of this FastAPI app, in SDL format.
+
+        This is the single discovery entry point. Every Query field maps to a
+        GET route and every Mutation field (if present) to a write route:
+        ``get_items_by_item_id(item_id: Int!): ItemOut`` comes from
+        ``GET /items/{item_id}``. Read this before writing any query — the
+        field signatures here are authoritative.
+
+        Responses are nullable per field: a route error nulls only its own
+        field, so several routes can be combined in one query safely.
+
+        Returns:
+            dict with:
+            - success: True
+            - data: {"sdl": "<GraphQL SDL string>"}
+            - hint: how to proceed next
+        """
+        try:
+            return create_success_response({"sdl": handler.get_sdl()}, hint=_HINT_AFTER_SCHEMA)
+        except Exception as e:  # pragma: no cover - defensive
+            return create_error_response(str(e), RouterQLErrors.INTERNAL_ERROR)
+
+    register_executor_tools(mcp, handler, allow_mutation=allow_mutation)
+
+
+def _document_matches(document: str, *, mutation: bool) -> bool:
+    """True if every operation in the document is of the requested kind."""
+    try:
+        ast = parse(document)
+    except Exception:
+        return True  # let graphql() produce the parse error
+    operations = [
+        d.operation for d in ast.definitions if isinstance(d, OperationDefinitionNode)
+    ]
+    if not operations:
+        return True  # fragments only / anonymous — graphql() will complain
+    expected = OperationType.MUTATION if mutation else OperationType.QUERY
+    return all(op == expected for op in operations)
+
+
 async def _execute(
     handler: RouterGraphQLHandler,
     document: str,
@@ -143,8 +151,8 @@ async def _execute(
         return create_error_response(
             "; ".join(e.get("message", "") for e in errors),
             kind,
-            hint="Call get_schema and check the field names, argument types "
-            "and operation type.",
+            hint="Call get_schema (or list_domains) and check the field names, "
+            "argument types and operation type.",
         )
     # Partial or full success (field-level errors stay inside data envelope).
     return create_success_response(result)
