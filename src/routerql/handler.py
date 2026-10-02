@@ -84,5 +84,26 @@ class RouterGraphQLHandler:
         """Release the invoker's HTTP client and app lifespan."""
         await self._invoker.aclose()
 
+    def mount_graphql(
+        self,
+        app: Any,
+        *,
+        graphql_path: str = "/graphql",
+        graphiql_path: str = "/graphiql",
+    ) -> None:
+        """Serve a GraphiQL playground + GraphQL HTTP endpoint on a FastAPI app.
+
+        Mounting into the SAME app that routerql wraps disables the invoker's
+        lifespan management (the app's own server lifespan drives it once).
+        """
+        from routerql.http_api import create_graphql_router
+
+        if app is self._invoker.app:
+            self._invoker.disable_lifespan_management()
+        router = create_graphql_router(
+            self, graphql_path=graphql_path, graphiql_path=graphiql_path
+        )
+        app.include_router(router)
+
 
 __all__ = ["RouterGraphQLHandler", "RouterQLConfigError"]

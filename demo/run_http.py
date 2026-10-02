@@ -2,8 +2,9 @@
 
     uv run --extra mcp uvicorn demo.run_http:app --port 8010 --reload
 
-Then point an MCP client at http://127.0.0.1:8010/mcp, or try the plain
-GraphQL handler from a script (see README).
+- MCP streamable HTTP:  http://127.0.0.1:8010/mcp/
+- GraphiQL playground:  http://127.0.0.1:8010/graphiql
+- GraphQL HTTP:         POST http://127.0.0.1:8010/graphql
 """
 
 from routerql import RouterMCP
@@ -17,3 +18,4 @@ mcp = RouterMCP(
     include=["/products*", "/orders*"],
 )
 mcp.mount_to(app, "/mcp")
+mcp.handler.mount_graphql(app)  # /graphiql + POST /graphql
