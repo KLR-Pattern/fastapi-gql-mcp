@@ -83,6 +83,33 @@ def _param_required(field_info: FieldInfo) -> bool:
         return field_info.default is None
 
 
+def _expand_query_model(model: type[BaseModel]) -> list[ParamInfo]:
+    """Flatten a Query Parameter Model into individual query params.
+
+    Mirrors FastAPI's wire format for a lone ``Annotated[Model, Query()]``
+    parameter: each model field becomes one query key (alias-aware), validated
+    by the model's own field metadata.
+    """
+    params: list[ParamInfo] = []
+    for field_name, info in model.model_fields.items():
+        request_name: str = field_name
+        for candidate in (info.validation_alias, info.alias):
+            if isinstance(candidate, str) and candidate:
+                request_name = candidate
+                break
+        required = bool(info.is_required())
+        params.append(
+            ParamInfo(
+                name=request_name,
+                annotation=info.annotation,
+                required=required,
+                default=None if required else info.get_default(call_default_factory=False),
+                raw_name=field_name,
+            )
+        )
+    return params
+
+
 def _to_param_info(model_field: Any, *, path_param: bool = False) -> ParamInfo:
     field_info: FieldInfo = model_field.field_info
     annotation = field_info.annotation
@@ -246,12 +273,22 @@ class RouterScanner:
                 )
                 return None
 
-        for group, label in ((path_p, "path"), (query_p, "query")):
-            for p in group:
-                annotation = p.field_info.annotation
-                if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-                    skip(f"{label} parameter model '{annotation.__name__}' "
-                         f"is not supported yet")
+        for p in path_p:
+            annotation = p.field_info.annotation
+            if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+                skip(f"path parameter model '{annotation.__name__}' is not supported")
+                return None
+        for p in query_p:
+            annotation = p.field_info.annotation
+            if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+                # FastAPI flattens a LONE BaseModel query param ("Query
+                # Parameter Models") into individual query keys on the wire;
+                # a model mixed with plain query params has no such shape.
+                if len(query_p) != 1:
+                    skip(
+                        f"query parameter model '{annotation.__name__}' mixed with "
+                        f"plain query parameters is not supported"
+                    )
                     return None
         for p in body_p:
             annotation = p.field_info.annotation
@@ -267,13 +304,23 @@ class RouterScanner:
             skip("returns a raw Response object, no typed body to expose")
             return None
 
+        query_params = (
+            _expand_query_model(query_p[0].field_info.annotation)
+            if len(query_p) == 1
+            and isinstance(query_p[0].field_info.annotation, type)
+            and issubclass(query_p[0].field_info.annotation, BaseModel)
+            else [_to_param_info(p) for p in query_p]
+        )
+
         try:
             types.output_type(response_annotation, context=f"response of {route.path}")
-            for p in path_p + query_p + body_p:
+            for param in (
+                *(_to_param_info(p, path_param=True) for p in path_p),
+                *query_params,
+                *(_to_param_info(p) for p in body_p),
+            ):
                 types.input_type(
-                    p.field_info.annotation,
-                    context=f"parameter '{p.validation_alias or p.alias or p.name}' "
-                    f"of {route.path}",
+                    param.annotation, context=f"parameter '{param.name}' of {route.path}"
                 )
         except UnsupportedFieldTypeError as exc:
             skip(f"unsupported type: {exc}")
@@ -292,7 +339,7 @@ class RouterScanner:
             path=route.path,
             field_name=field_name_for(method, route.path),
             path_params=tuple(_to_param_info(p, path_param=True) for p in path_p),
-            query_params=tuple(_to_param_info(p) for p in query_p),
+            query_params=tuple(query_params),
             body_params=tuple(body_params),
             response_annotation=response_annotation,
             tags=str_tags,

@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, Query
 from fastapi.responses import PlainTextResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from routerql.scanner import RouterScanner, SkipRecord
 
@@ -240,3 +240,77 @@ class TestMountAndSockets:
         routes, skips = RouterScanner(app).scan()
         assert routes == []
         assert skips == []
+
+
+class TestQueryParameterModels:
+    def test_lone_query_model_expanded(self):
+        from typing import Annotated
+
+        from fastapi import Query
+
+        class ItemFilter(BaseModel):
+            category: str
+            min_price: float = 0.0
+            page_size: int = Field(default=20, validation_alias="pageSize")
+
+        app = FastAPI()
+
+        @app.get("/filtered", response_model=ItemOut)
+        async def filtered(filters: Annotated[ItemFilter, Query()]):
+            return ItemOut(id=1, name="x")
+
+        routes, skips = RouterScanner(app).scan()
+        assert not skips
+        r = by_field(routes, "get_filtered")
+        q = {p.name: p for p in r.query_params}
+        assert set(q) == {"category", "min_price", "pageSize"}
+        assert q["category"].required is True
+        assert q["min_price"].default == 0.0
+        assert q["pageSize"].default == 20
+
+    async def test_query_model_end_to_end(self):
+        from typing import Annotated
+
+        from fastapi import Query
+
+        from routerql.handler import RouterGraphQLHandler
+
+        class ItemFilter(BaseModel):
+            category: str
+            limit: int = 2
+
+        app = FastAPI()
+        seen: dict = {}
+
+        @app.get("/things", response_model=list[ItemOut])
+        async def things(filters: Annotated[ItemFilter, Query()]):
+            seen.update(filters.model_dump())
+            return [ItemOut(id=i, name=filters.category) for i in range(filters.limit)]
+
+        handler = RouterGraphQLHandler(app)
+        sdl = handler.get_sdl()
+        assert "get_things(category: String!, limit: Int = 2): [ItemOut!]" in sdl
+        result = await handler.execute(
+            "{ get_things(category: \"tools\") { name } }"
+        )
+        assert result == {"data": {"get_things": [{"name": "tools"}, {"name": "tools"}]}}
+        assert seen == {"category": "tools", "limit": 2}
+        await handler.aclose()
+
+    def test_query_model_mixed_with_plain_param_skipped(self):
+        from typing import Annotated
+
+        from fastapi import Query
+
+        class ItemFilter(BaseModel):
+            category: str
+
+        app = FastAPI()
+
+        @app.get("/mixed", response_model=ItemOut)
+        async def mixed(filters: Annotated[ItemFilter, Query()], limit: int = 5):
+            return ItemOut(id=1, name="x")
+
+        routes, skips = RouterScanner(app).scan()
+        assert routes == []
+        assert any("mixed with" in s.reason for s in skips)
