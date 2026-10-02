@@ -1,0 +1,312 @@
+"""Introspect a FastAPI app's routes into GraphQL field metadata.
+
+The scanner is the single source of truth for "what the GraphQL schema will
+contain": every rule that excludes a route (no typed response, hidden route,
+mutation disabled, …) lives here and produces a ``SkipRecord``; the caller
+decides whether those skips are acceptable.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import logging
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import Any
+
+from fastapi import FastAPI
+from fastapi.dependencies.models import Dependant
+from fastapi.dependencies.utils import get_typed_return_annotation
+from fastapi.responses import Response
+from fastapi.routing import APIRoute
+from fastapi.utils import DefaultPlaceholder  # type: ignore[attr-defined]
+from pydantic import BaseModel
+from pydantic.fields import FieldInfo
+
+from routerql.domains import domains_for
+from routerql.naming import field_name_for
+from routerql.type_builder import TypeBuilder, UnsupportedFieldTypeError
+
+logger = logging.getLogger(__name__)
+
+# Priority when a route registers multiple verbs (e.g. @app.api_methods).
+_VERB_PRIORITY = ("GET", "POST", "PUT", "PATCH", "DELETE")
+_MUTATION_VERBS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@dataclass(frozen=True)
+class ParamInfo:
+    """One GraphQL-argument-worthy parameter of a route."""
+
+    name: str
+    annotation: Any
+    required: bool
+    default: Any = None
+    embed: bool = False
+
+
+@dataclass(frozen=True)
+class RouteInfo:
+    """Everything the schema builder needs about one routable endpoint."""
+
+    route: APIRoute = field(repr=False)
+    method: str
+    path: str
+    field_name: str
+    path_params: tuple[ParamInfo, ...] = ()
+    query_params: tuple[ParamInfo, ...] = ()
+    body_params: tuple[ParamInfo, ...] = ()
+    response_annotation: Any = None
+    tags: tuple[str, ...] = ()
+    description: str | None = None
+    domains: frozenset[tuple[str, ...]] = frozenset()
+
+    @property
+    def is_mutation(self) -> bool:
+        return self.method in _MUTATION_VERBS
+
+
+@dataclass(frozen=True)
+class SkipRecord:
+    """A route that was excluded from the schema, and why."""
+
+    path: str
+    method: str
+    reason: str
+
+
+def _param_required(field_info: FieldInfo) -> bool:
+    try:
+        return bool(field_info.is_required())
+    except Exception:  # pragma: no cover - defensive for fastapi internals
+        return field_info.default is None
+
+
+def _to_param_info(model_field: Any, *, path_param: bool = False) -> ParamInfo:
+    field_info: FieldInfo = model_field.field_info
+    annotation = field_info.annotation
+    # Request-side name: FastAPI validates against validation_alias/alias/name.
+    name = model_field.validation_alias or model_field.alias or model_field.name
+    required = path_param or _param_required(field_info)
+    return ParamInfo(
+        name=name,
+        annotation=annotation,
+        required=required,
+        default=None if required else field_info.default,
+        embed=bool(getattr(field_info, "embed", False)),
+    )
+
+
+def _flatten_params(
+    dependant: Dependant,
+) -> tuple[list[Any], list[Any], list[Any], list[Any], list[Any]]:
+    """Walk the dependency tree collecting params by location (name-deduped)."""
+    path_params: list[Any] = []
+    query_params: list[Any] = []
+    header_params: list[Any] = []
+    cookie_params: list[Any] = []
+    body_params: list[Any] = []
+    seen: set[int] = set()
+    stack: list[Dependant] = [dependant]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        path_params.extend(current.path_params)
+        query_params.extend(current.query_params)
+        header_params.extend(current.header_params)
+        cookie_params.extend(current.cookie_params)
+        body_params.extend(current.body_params)
+        stack.extend(reversed(current.dependencies))
+
+    def dedup(params: list[Any]) -> list[Any]:
+        by_name: dict[str, Any] = {}
+        for p in params:
+            name = p.validation_alias or p.alias or p.name
+            by_name.setdefault(name, p)
+        return list(by_name.values())
+
+    return (
+        dedup(path_params),
+        dedup(query_params),
+        dedup(header_params),
+        dedup(cookie_params),
+        dedup(body_params),
+    )
+
+
+def _body_embeds(body_params: Sequence[ParamInfo]) -> bool:
+    """Replicates fastapi.dependencies.utils._should_embed_body_fields."""
+    if len(body_params) > 1:
+        return True
+    only = body_params[0]
+    if only.embed:
+        return True
+    annotation = only.annotation
+    return not (isinstance(annotation, type) and issubclass(annotation, BaseModel))
+
+
+def _matches(path: str, patterns: Sequence[str] | None) -> bool:
+    return any(fnmatch.fnmatch(path, pattern) for pattern in patterns or ())
+
+
+class RouterScanner:
+    """Scans ``app.routes`` into ``RouteInfo`` / ``SkipRecord`` lists."""
+
+    def __init__(
+        self,
+        app: FastAPI,
+        *,
+        include: Sequence[str] | None = None,
+        exclude: Sequence[str] | None = None,
+        allow_mutation: bool = False,
+        include_hidden: bool = False,
+    ) -> None:
+        self._app = app
+        self._include = include
+        self._exclude = exclude
+        self._allow_mutation = allow_mutation
+        self._include_hidden = include_hidden
+
+    def scan(
+        self, types: TypeBuilder | None = None
+    ) -> tuple[list[RouteInfo], list[SkipRecord]]:
+        """Scan the app; ``types`` (shared TypeBuilder) trials response models."""
+        types = types or TypeBuilder()
+        routes: list[RouteInfo] = []
+        skips: list[SkipRecord] = []
+
+        for r in self._app.routes:
+            if not isinstance(r, APIRoute):
+                continue  # Mount / WebSocket / static routes are out of scope
+
+            route_methods = r.methods or set()
+            verbs = sorted(route_methods & set(_VERB_PRIORITY), key=_VERB_PRIORITY.index)
+            if not verbs:
+                continue  # HEAD / OPTIONS only
+            if len(verbs) > 1:
+                logger.warning(
+                    "Route %s registers multiple verbs %s; using %s (priority order)",
+                    r.path,
+                    sorted(route_methods),
+                    verbs[0],
+                )
+            method = verbs[0]
+
+            if self._exclude and _matches(r.path, self._exclude):
+                continue
+            if self._include is not None and not _matches(r.path, self._include):
+                continue
+
+            if method in _MUTATION_VERBS and not self._allow_mutation:
+                skips.append(
+                    SkipRecord(r.path, method, "mutation endpoints are disabled "
+                              "(pass allow_mutation=True to expose them)")
+                )
+                continue
+
+            if not r.include_in_schema and not self._include_hidden:
+                skips.append(
+                    SkipRecord(r.path, method, "hidden route (include_in_schema=False)")
+                )
+                continue
+
+            route_info = self._build_route_info(r, method, types, skips)
+            if route_info is not None:
+                routes.append(route_info)
+
+        if skips:
+            rendered = "; ".join(f"{s.method} {s.path}: {s.reason}" for s in skips)
+            logger.warning("routerql skipped %d route(s): %s", len(skips), rendered)
+        return routes, skips
+
+    # ----------------------------------------------------------------- helpers
+
+    def _build_route_info(
+        self,
+        route: APIRoute,
+        method: str,
+        types: TypeBuilder,
+        skips: list[SkipRecord],
+    ) -> RouteInfo | None:
+        def skip(reason: str) -> None:
+            skips.append(SkipRecord(route.path, method, reason))
+
+        flat = _flatten_params(route.dependant)
+        path_p, query_p, header_p, cookie_p, body_p = flat
+
+        for p in header_p + cookie_p:
+            if _param_required(p.field_info):
+                skip(
+                    f"required header/cookie parameter "
+                    f"'{p.validation_alias or p.alias or p.name}' cannot be a GraphQL argument"
+                )
+                return None
+
+        for group, label in ((path_p, "path"), (query_p, "query")):
+            for p in group:
+                annotation = p.field_info.annotation
+                if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+                    skip(f"{label} parameter model '{annotation.__name__}' "
+                         f"is not supported yet")
+                    return None
+        for p in body_p:
+            annotation = p.field_info.annotation
+            if annotation is None:
+                skip("body parameter without a typed annotation")
+                return None
+
+        response_annotation = self._response_annotation(route)
+        if response_annotation is None:
+            skip("no typed response (response_model or return annotation required)")
+            return None
+        if isinstance(response_annotation, type) and issubclass(response_annotation, Response):
+            skip("returns a raw Response object, no typed body to expose")
+            return None
+
+        try:
+            types.output_type(response_annotation, context=f"response of {route.path}")
+            for p in path_p + query_p + body_p:
+                types.input_type(
+                    p.field_info.annotation,
+                    context=f"parameter '{p.validation_alias or p.alias or p.name}' "
+                    f"of {route.path}",
+                )
+        except UnsupportedFieldTypeError as exc:
+            skip(f"unsupported type: {exc}")
+            return None
+
+        body_params = [_to_param_info(p) for p in body_p]
+        embeds = _body_embeds(body_params) if body_params else False
+        if embeds:
+            body_params = [
+                ParamInfo(p.name, p.annotation, p.required, p.default, embed=True)
+                for p in body_params
+            ]
+
+        description = route.summary or route.description or None
+        # OpenAPI typing allows Enum tags; only string tags form domains.
+        str_tags = tuple(t for t in route.tags or () if isinstance(t, str))
+        return RouteInfo(
+            route=route,
+            method=method,
+            path=route.path,
+            field_name=field_name_for(method, route.path),
+            path_params=tuple(_to_param_info(p, path_param=True) for p in path_p),
+            query_params=tuple(_to_param_info(p) for p in query_p),
+            body_params=tuple(body_params),
+            response_annotation=response_annotation,
+            tags=str_tags,
+            description=description,
+            domains=domains_for(str_tags, route.path),
+        )
+
+    @staticmethod
+    def _response_annotation(route: APIRoute) -> Any:
+        response_model = route.response_model
+        # Both an explicit response_model=None (Response-returning routes) and
+        # the DefaultPlaceholder (unset) fall back to the typed return annotation.
+        if response_model is None or isinstance(response_model, DefaultPlaceholder):
+            return get_typed_return_annotation(route.endpoint)
+        return response_model
