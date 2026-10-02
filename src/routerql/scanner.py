@@ -11,7 +11,7 @@ from __future__ import annotations
 import fnmatch
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from fastapi import FastAPI
@@ -43,6 +43,7 @@ class ParamInfo:
     required: bool
     default: Any = None
     embed: bool = False
+    raw_name: str = ""  # function-arg name, used for path-template replacement
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,7 @@ def _to_param_info(model_field: Any, *, path_param: bool = False) -> ParamInfo:
         required=required,
         default=None if required else field_info.default,
         embed=bool(getattr(field_info, "embed", False)),
+        raw_name=model_field.name,
     )
 
 
@@ -278,12 +280,8 @@ class RouterScanner:
             return None
 
         body_params = [_to_param_info(p) for p in body_p]
-        embeds = _body_embeds(body_params) if body_params else False
-        if embeds:
-            body_params = [
-                ParamInfo(p.name, p.annotation, p.required, p.default, embed=True)
-                for p in body_params
-            ]
+        if body_params and _body_embeds(body_params):
+            body_params = [replace(p, embed=True) for p in body_params]
 
         description = route.summary or route.description or None
         # OpenAPI typing allows Enum tags; only string tags form domains.
