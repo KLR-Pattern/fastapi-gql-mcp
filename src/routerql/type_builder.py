@@ -201,6 +201,13 @@ class TypeBuilder:
             return self._bare_output(unwrap_optional(annotation), context)
         return GraphQLNonNull(self._bare_output(strip_annotated(annotation), context))
 
+    def bare_output_type(
+        self, annotation: Any, *, context: str = "field"
+    ) -> GraphQLScalarType | GraphQLObjectType | GraphQLEnumType | GraphQLList[Any]:
+        """Output type without the outer NonNull — for fields whose errors must
+        null only themselves (route responses)."""
+        return self._bare_output(strip_annotated(unwrap_optional(annotation)), context)
+
     def _bare_output(
         self, annotation: Any, context: str
     ) -> GraphQLScalarType | GraphQLObjectType | GraphQLEnumType | GraphQLList[Any]:
