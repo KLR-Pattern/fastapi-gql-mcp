@@ -204,3 +204,58 @@ class TestServerBehavior:
     async def test_domains_registry_built(self, mcp):
         summary = mcp.domains.summary()
         assert summary and summary[0]["name"] == "iam"
+
+
+class TestMountTo:
+    async def test_mounted_endpoint_serves_mcp(self):
+        import httpx
+        from asgi_lifespan import LifespanManager
+
+        from demo.demo_app import create_app
+
+        demo_app = create_app()
+        mcp = RouterMCP(demo_app, name="mounted", include=["/products*"])
+        mcp.mount_to(demo_app, "/mcp")
+        # Same-app mount must disable the invoker's own lifespan management.
+        assert mcp.handler.invoker.manage_lifespan is False
+
+        async with LifespanManager(demo_app):
+            transport = httpx.ASGITransport(app=demo_app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/mcp/",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {},
+                            "clientInfo": {"name": "t", "version": "0"},
+                        },
+                    },
+                    headers={"Accept": "application/json, text/event-stream"},
+                )
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+
+    async def test_host_routes_still_work_after_mount(self):
+        import httpx
+        from asgi_lifespan import LifespanManager
+
+        from demo.demo_app import create_app
+
+        demo_app = create_app()
+        mcp = RouterMCP(demo_app, name="mounted2", include=["/products*"])
+        mcp.mount_to(demo_app, "/mcp")
+
+        async with LifespanManager(demo_app):
+            transport = httpx.ASGITransport(app=demo_app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                response = await client.get("/products")
+        assert response.status_code == 200
+        assert response.json()[0]["name"] == "espresso machine"

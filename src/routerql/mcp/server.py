@@ -21,6 +21,28 @@ PROGRESSIVE_THRESHOLD = 25
 _Transport = Literal["stdio", "http"]
 
 
+def _compose_lifespan(host: FastAPI, sub_http_app: Any) -> None:
+    """Chain a mounted sub-app's lifespan into the host app's lifespan.
+
+    Starlette never runs lifespans of mounted apps, but fastmcp's streamable
+    HTTP session manager requires one ("Task group is not initialized").
+    """
+    from collections.abc import AsyncIterator
+    from contextlib import AsyncExitStack, asynccontextmanager
+
+    host_lifespan = host.router.lifespan_context
+    sub_lifespan = getattr(sub_http_app, "lifespan", None) or sub_http_app.router.lifespan_context
+
+    @asynccontextmanager
+    async def combined(app: FastAPI) -> AsyncIterator[None]:
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(host_lifespan(app))
+            await stack.enter_async_context(sub_lifespan(app))
+            yield
+
+    host.router.lifespan_context = combined
+
+
 class RouterMCP:
     """Expose a FastAPI app as an MCP server backed by a GraphQL schema.
 
@@ -113,8 +135,9 @@ class RouterMCP:
         self._mcp.run(transport=transport)
 
     def mount_to(self, app: FastAPI, path: str = "/mcp") -> None:
-        """Mount the MCP server into a FastAPI app.
+        """Mount the MCP server into a FastAPI app (streamable HTTP).
 
+        The endpoint is served at ``{path}/`` — e.g. ``/mcp/`` by default.
         Mounting into the SAME app that routerql wraps disables the invoker's
         lifespan management (the app's own uvicorn lifespan drives it once).
         Mounting into a different app leaves it managed, but that app will not
@@ -130,4 +153,11 @@ class RouterMCP:
                 "the wrapped app's lifespan events will not fire unless "
                 "something else runs them."
             )
-        app.mount(path, self._mcp.http_app())
+        # http_app's internal route defaults to "/mcp"; re-root it to "/" so the
+        # mount path itself is the endpoint.
+        http_app = self._mcp.http_app(path="/")
+        # Starlette does NOT run lifespans of mounted sub-apps; fastmcp's
+        # streamable HTTP session manager needs one, so compose it into the
+        # host app's lifespan.
+        _compose_lifespan(app, http_app)
+        app.mount(path, http_app)

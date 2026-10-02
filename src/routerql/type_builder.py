@@ -147,6 +147,12 @@ def describe_literal_values(annotation: Any) -> str | None:
     return f"Allowed values: {rendered}{suffix}"
 
 
+def _own_doc(cls: type) -> str | None:
+    """A class's own docstring only — inherited ones (e.g. BaseModel's) are noise."""
+    doc = cls.__dict__.get("__doc__")
+    return inspect.cleandoc(doc).strip() if doc else None
+
+
 def _field_description(field: FieldInfo, annotation: Any) -> str | None:
     parts = [field.description] if field.description else []
     literal_note = describe_literal_values(annotation)
@@ -240,7 +246,7 @@ class TypeBuilder:
         name = self._register_name(model, sanitize_graphql_name(model.__name__, what="type name"))
         obj = GraphQLObjectType(
             name=name,
-            description=inspect.getdoc(model),
+            description=_own_doc(model),
             fields=lambda: self._output_fields_cached(model),
         )
         # Register BEFORE building fields so recursive models resolve the cycle
@@ -318,7 +324,7 @@ class TypeBuilder:
         name = self._register_name(model, f"{base}Input")
         obj = GraphQLInputObjectType(
             name=name,
-            description=inspect.getdoc(model),
+            description=_own_doc(model),
             fields=lambda: self._input_fields_cached(model),
         )
         self._input_types[model] = obj  # register first: cycles resolve to this object
@@ -381,7 +387,7 @@ class TypeBuilder:
         enum_type = GraphQLEnumType(
             name=name,
             values={member.name: member.value for member in enum_cls},
-            description=inspect.getdoc(enum_cls),
+            description=_own_doc(enum_cls),
         )
         self._enum_types[enum_cls] = enum_type
         return enum_type
