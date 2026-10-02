@@ -29,6 +29,16 @@ agents get:
 - **real auth** — queries run through the actual ASGI app, so `Depends`,
   middleware and headers apply; pass credentials via `headers_provider`
 
+### Compared to the alternatives
+
+| | fastapi-mcp / FastMCP.from_openapi | Apollo MCP (GraphQL ops) | **routerql** |
+|---|---|---|---|
+| Requires existing GraphQL API | no | **yes** | no — derived from routes |
+| Tool count | one per endpoint (grows) | one per operation | 2-6, constant |
+| Field-level selection | no | yes | yes |
+| Combine endpoints in one call | no | yes | yes |
+| Setup cost | none | build a GraphQL server | none |
+
 ## How it works
 
 ```
@@ -47,13 +57,16 @@ FastAPI app ──① RouterScanner introspects app.routes ──▶ GraphQLSche
 
 Rules worth knowing:
 
-- **Mutations are off by default** (`allow_mutation=True` to expose writes);
+- **Mutations are off by default** (`allow_mutation=True` to expose writes;
+  `mutation_include=[...]` globs to whitelist specific write routes);
   `graphql_query` also refuses mutation documents.
 - Untyped routes (no `response_model`/return annotation, raw `Response`,
   hidden routes, required header/cookie params) are **skipped with a warning**.
 - `include`/`exclude` fnmatch globs scope which routes enter the schema.
-- Route tags form a **domain tree** (`tags=["billing:invoice"]`); progressive
-  disclosure tooling over it lands in P2.
+- Route tags form a **domain tree** (`tags=["billing:invoice"]`); large apps
+  switch to **progressive disclosure** (below).
+- A lone `Annotated[FilterModel, Query()]` flattens into individual query
+  arguments (FastAPI Query Parameter Models).
 - Same-named Pydantic classes from different modules get qualified type names.
 
 ## Installation
@@ -78,10 +91,25 @@ mcp = RouterMCP(
 mcp.run()
 ```
 
+### Progressive disclosure (large apps)
+
+Above `progressive_threshold` routes (default 25, `mode="auto"`), the toolset
+switches to a 4-layer walkthrough of the tag tree:
+
+```
+list_domains ──▶ list_queries("billing:invoice") ──▶ get_query_schema(...) ──▶ graphql_query
+```
+
+Each domain SDL fragment contains only that subtree's operations and the types
+they reach. **Discovery is scoped; execution is not** — `graphql_query` always
+runs against the full schema, so fields from different domains combine freely.
+Force either mode with `mode="simple" | "progressive"`.
+
 ### Mounted into the same app
 
 ```python
-mcp.mount_to(app, "/mcp")   # http://host/mcp for remote MCP clients
+mcp.mount_to(app, "/mcp")            # streamable HTTP at /mcp/
+mcp.handler.mount_graphql(app)       # GraphiQL at /graphiql + POST /graphql
 ```
 
 ### Plain GraphQL (no MCP)
@@ -97,26 +125,47 @@ result = await handler.execute(
 )
 ```
 
+## Authentication
+
+Route calls travel through the real ASGI app in-process, so `Depends`,
+middleware and security schemes behave exactly as over HTTP. Two consequences:
+
+- **Without credentials, protected routes fail** — you will see field errors
+  like `HTTP_401` in query results.
+- **Provide credentials via `headers_provider`** (sync or async, evaluated per
+  request): static tokens, environment lookups, or short-lived tokens from
+  your own OAuth client:
+
+  ```python
+  async def headers_provider() -> dict[str, str]:
+      return {"authorization": f"Bearer {await get_access_token()}"}
+
+  mcp = RouterMCP(app, headers_provider=headers_provider)
+  ```
+
+Keep in mind the provider runs with the server's privileges — scope the token
+to what the agent should be allowed to do (e.g. read-only), and combine with
+`allow_mutation=False` / `mutation_include` to keep writes out of reach.
+
 ## Demo
 
 ```bash
 uv run --extra mcp python -m demo.run_mcp                          # stdio MCP
-uv run --extra mcp uvicorn demo.run_http:app --port 8010           # HTTP + /mcp
+uv run --extra mcp uvicorn demo.run_http:app --port 8010           # HTTP + /mcp/ + /graphiql
 ```
 
 ## Development
 
 ```bash
-uv sync && uv run pytest        # 125 tests
+uv sync && uv run pytest        # tests
 uv run ruff check src tests
 uv run mypy src
 ```
 
 ## Status
 
-P1 (core + simple MCP mode). Roadmap: P2 tag-based progressive disclosure
-(`list_domains` / `list_queries` / `get_query_schema`), BaseModel query
-parameter models, GraphiQL page; P3 mutation whitelisting; P4 PyPI release.
+0.2.0 — see [CHANGELOG.md](CHANGELOG.md). Ideas welcome: GraphQL subscriptions
+over SSE routes, response header pass-through, per-domain auth scopes.
 
 Design extracted from [nexusx](https://github.com/KLR-Pattern/nexusx)
 (SQLModel → GraphQL → MCP), rebuilt on graphql-core standard execution.

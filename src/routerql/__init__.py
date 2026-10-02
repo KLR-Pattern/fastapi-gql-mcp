@@ -6,7 +6,7 @@ from routerql.mcp.errors import RouterQLErrors
 from routerql.mcp.server import RouterMCP
 from routerql.scanner import RouteInfo, RouterScanner
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "HeadersProvider",
