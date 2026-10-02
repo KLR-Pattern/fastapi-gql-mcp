@@ -29,6 +29,7 @@ class RouterGraphQLHandler:
         allow_mutation: bool = False,
         headers_provider: HeadersProvider | None = None,
         include_hidden: bool = False,
+        mutation_include: Sequence[str] | None = None,
     ) -> None:
         self._invoker = RouteInvoker(app, headers_provider=headers_provider)
         self._types = TypeBuilder()
@@ -38,6 +39,7 @@ class RouterGraphQLHandler:
             exclude=exclude,
             allow_mutation=allow_mutation,
             include_hidden=include_hidden,
+            mutation_include=mutation_include,
         ).scan(self._types)
         self._schema = SchemaBuilder(routes, self._invoker, self._types).build()
         self._routes: list[RouteInfo] = routes

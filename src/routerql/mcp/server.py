@@ -52,6 +52,8 @@ class RouterMCP:
         include/exclude: fnmatch globs over route paths (exclude wins).
         allow_mutation: Expose POST/PUT/PATCH/DELETE routes as GraphQL
             mutations. Default False (read-only).
+        mutation_include: fnmatch globs limiting WHICH write routes become
+            mutations (requires allow_mutation=True).
         headers_provider: Callable (sync or async) returning headers merged
             into every route call — inject credentials here.
         mode: ``simple`` registers get_schema + graphql_query;
@@ -74,6 +76,7 @@ class RouterMCP:
         mode: Literal["auto", "simple", "progressive"] = "auto",
         include_hidden: bool = False,
         progressive_threshold: int = PROGRESSIVE_THRESHOLD,
+        mutation_include: Sequence[str] | None = None,
     ) -> None:
         self._mode = mode
         self._progressive_threshold = progressive_threshold
@@ -84,6 +87,7 @@ class RouterMCP:
             allow_mutation=allow_mutation,
             headers_provider=headers_provider,
             include_hidden=include_hidden,
+            mutation_include=mutation_include,
         )
         self._resolved_mode = self._resolve_mode(mode, app)
         self._domains = DomainRegistry(self._handler.routes)

@@ -191,12 +191,14 @@ class RouterScanner:
         exclude: Sequence[str] | None = None,
         allow_mutation: bool = False,
         include_hidden: bool = False,
+        mutation_include: Sequence[str] | None = None,
     ) -> None:
         self._app = app
         self._include = include
         self._exclude = exclude
         self._allow_mutation = allow_mutation
         self._include_hidden = include_hidden
+        self._mutation_include = mutation_include
 
     def scan(
         self, types: TypeBuilder | None = None
@@ -232,6 +234,19 @@ class RouterScanner:
                 skips.append(
                     SkipRecord(r.path, method, "mutation endpoints are disabled "
                               "(pass allow_mutation=True to expose them)")
+                )
+                continue
+
+            if (
+                method in _MUTATION_VERBS
+                and self._mutation_include is not None
+                and not _matches(r.path, self._mutation_include)
+            ):
+                skips.append(
+                    SkipRecord(
+                        r.path, method,
+                        "mutation endpoint not matched by mutation_include globs",
+                    )
                 )
                 continue
 

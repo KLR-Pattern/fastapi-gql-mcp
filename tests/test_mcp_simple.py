@@ -278,3 +278,31 @@ class TestMountTo:
                 response = await client.get("/products")
         assert response.status_code == 200
         assert response.json()[0]["name"] == "espresso machine"
+
+
+class TestMutationWhitelist:
+    async def test_mutation_include_filters_writes(self):
+        app = build_app()  # POST /users is the only write route
+
+        mcp = RouterMCP(
+            app,
+            name="wl",
+            allow_mutation=True,
+            mutation_include=["/nope*"],
+        )
+        sdl = mcp.handler.get_sdl()
+        assert "Mutation" not in sdl  # no write route survived the whitelist
+
+        mcp2 = RouterMCP(
+            app,
+            name="wl2",
+            allow_mutation=True,
+            mutation_include=["/users"],
+        )
+        assert "create_users" in mcp2.handler.get_sdl()
+
+    async def test_reads_unaffected_by_whitelist(self):
+        app = build_app()
+        mcp = RouterMCP(app, name="wl3", allow_mutation=True, mutation_include=["/none"])
+        sdl = mcp.handler.get_sdl()
+        assert "get_users" in sdl
