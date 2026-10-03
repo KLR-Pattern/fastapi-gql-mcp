@@ -27,6 +27,11 @@ Schema shape + documentation wave (breaking).
 
 ### Added
 
+- Upgraded the optional `mcp` extra to **fastmcp 4.0.9** (from 3.1): zero code
+  changes needed — `FastMCP` construction, tool registration, `http_app`
+  mounting and `run()` all carried over. 4.0.10 is excluded until upstream
+  fixes a regression (missing `fastmcp.server.tasks.routing` on the HTTP
+  tool-execution path).
 - Mutation execution semantics pinned by tests: cross-domain writes are
   serial (spec-guaranteed at the mutation root); same-domain writes run in
   parallel. Mutation-only schemas now fail fast with guidance (GraphQL
