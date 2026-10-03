@@ -46,6 +46,8 @@ class UserFilter(BaseModel):
 
 
 class ProductOut(BaseModel):
+    """A catalog product as exposed to customers."""
+
     id: int
     name: str
     category: str
@@ -160,8 +162,12 @@ def create_app() -> FastAPI:
 
     @app.get("/products", response_model=list[ProductOut], tags=["shop:catalog"])
     async def list_products(
-        filters: Annotated[ProductFilter, Query()],
+        filters: Annotated[ProductFilter, Query(description="catalog filters")],
     ) -> list[ProductOut]:
+        """Browse the product catalog.
+
+        Filter by category and stock; results are capped by ``limit``.
+        """
         products = app.state.products.values()
         if filters.category is not None:
             products = (p for p in products if p["category"] == filters.category)
@@ -188,8 +194,12 @@ def create_app() -> FastAPI:
 
     @app.get("/orders", response_model=list[OrderOut], tags=["shop:orders"])
     async def list_orders(
-        status: str | None = None, _token: str = Depends(verify_token)
+        status: Annotated[
+            str | None, Query(description="filter by order status, e.g. paid")
+        ] = None,
+        _token: str = Depends(verify_token),
     ) -> list[OrderOut]:
+        """List orders (requires x-token)."""
         orders = app.state.orders.values()
         if status is not None:
             orders = (o for o in orders if o["status"] == status)

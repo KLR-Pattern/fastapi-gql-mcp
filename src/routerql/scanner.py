@@ -44,6 +44,7 @@ class ParamInfo:
     default: Any = None
     embed: bool = False
     raw_name: str = ""  # function-arg name, used for path-template replacement
+    description: str | None = None  # from Query()/Body() metadata
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,7 @@ def _expand_query_model(model: type[BaseModel]) -> list[ParamInfo]:
                 required=required,
                 default=None if required else info.get_default(call_default_factory=False),
                 raw_name=field_name,
+                description=info.description,
             )
         )
     return params
@@ -123,6 +125,7 @@ def _to_param_info(model_field: Any, *, path_param: bool = False) -> ParamInfo:
         default=None if required else field_info.default,
         embed=bool(getattr(field_info, "embed", False)),
         raw_name=model_field.name,
+        description=getattr(field_info, "description", None),
     )
 
 

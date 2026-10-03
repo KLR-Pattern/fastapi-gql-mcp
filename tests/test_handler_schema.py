@@ -2,7 +2,7 @@
 
 import pytest
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from routerql.handler import RouterGraphQLHandler, RouterQLConfigError
 from routerql.schema_builder import DuplicateArgError
@@ -191,3 +191,61 @@ class TestDuplicateEndpointNames:
 
         handler = RouterGraphQLHandler(app, allow_mutation=True)
         assert "thing" in handler.get_sdl()
+
+
+class TestDescriptions:
+    def _sdl(self):
+        from typing import Annotated
+
+        from fastapi import Body, Query
+
+        class Documented(BaseModel):
+            """A documented response model."""
+
+            id: int
+            note: str = Field(description="field-level description")
+
+        app = FastAPI()
+
+        @app.get("/search", response_model=list[Documented], tags=["docs"])
+        async def search(
+            q: Annotated[str, Query(description="full-text search terms")] = "",
+            limit: Annotated[int, Query(ge=1)] = 5,
+        ) -> list[Documented]:
+            """Search documented things.
+
+            Docstring body with details.
+            """
+            return [Documented(id=1, note="x")]
+
+        @app.post("/things", response_model=Documented, tags=["docs"])
+        async def create(
+            payload: Annotated[Documented, Body(description="the thing to create")],
+        ) -> Documented:
+            return payload
+
+        return RouterGraphQLHandler(app, allow_mutation=True).get_sdl()
+
+    def test_model_docstring_becomes_type_description(self):
+        sdl = self._sdl()
+        assert '"""\nA documented response model.\n"""' in sdl or (
+            '"""A documented response model."""' in sdl
+        )
+
+    def test_field_description_present(self):
+        assert '"""field-level description"""' in self._sdl()
+
+    def test_endpoint_docstring_becomes_field_description(self):
+        sdl = self._sdl()
+        assert "Search documented things." in sdl
+        assert "Docstring body with details." in sdl
+
+    def test_param_description_becomes_argument_description(self):
+        sdl = self._sdl()
+        assert '"""full-text search terms"""' in sdl
+        assert '"""the thing to create"""' in sdl
+
+    def test_undocumented_params_have_no_description(self):
+        sdl = self._sdl()
+        # limit has no Query(description=...): its SDL line is bare
+        assert "limit: Int = 5" in sdl

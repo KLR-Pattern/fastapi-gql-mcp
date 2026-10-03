@@ -78,6 +78,10 @@ Rules worth knowing:
 - A lone `Annotated[FilterModel, Query()]` flattens into individual query
   arguments (FastAPI Query Parameter Models).
 - Same-named Pydantic classes from different modules get qualified type names.
+- **Descriptions flow into the schema**: model docstrings → type descriptions,
+  `Field(description=...)` → field descriptions, endpoint docstrings (or
+  `summary=`) → field descriptions, and `Query()/Body(description=...)` →
+  argument descriptions.
 
 ## Installation
 

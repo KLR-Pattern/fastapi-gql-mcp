@@ -52,7 +52,7 @@ def _argument(param: ParamInfo, types: TypeBuilder, route: RouteInfo) -> GraphQL
     )
     gtype: Any = GraphQLNonNull(bare) if param.required else bare
     default = Undefined if param.required else _graphql_default(param.default)
-    return GraphQLArgument(gtype, default_value=default)
+    return GraphQLArgument(gtype, default_value=default, description=param.description)
 
 
 def _graphql_default(default: Any) -> Any:
