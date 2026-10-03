@@ -249,4 +249,12 @@ class SchemaBuilder:
             raise GQLMCPConfigError(
                 "fastapi-gql-mcp found no routable endpoints: every route was skipped."
             )
+        if query_type is None:
+            # GraphQL requires a Query root; a mutation-only schema would fail
+            # validation at first execution, so fail fast with guidance instead.
+            raise GQLMCPConfigError(
+                "fastapi-gql-mcp cannot build a mutation-only schema: GraphQL "
+                "requires a Query root type. Expose at least one GET route "
+                "(or drop allow_mutation)."
+            )
         return GraphQLSchema(query=query_type, mutation=mutation_type)

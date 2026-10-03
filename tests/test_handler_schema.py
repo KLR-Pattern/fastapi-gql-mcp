@@ -249,3 +249,17 @@ class TestDescriptions:
         sdl = self._sdl()
         # limit has no Query(description=...): its SDL line is bare
         assert "limit: Int = 5" in sdl
+
+
+class TestMutationOnlyApp:
+    def test_mutation_only_schema_fails_fast(self):
+        from fastapi_gql_mcp import GQLMCPConfigError
+
+        app = FastAPI()
+
+        @app.post("/things", response_model=ItemOut)
+        async def create_thing(payload: ItemCreate):
+            return ItemOut(id=1, name=payload.name)
+
+        with pytest.raises(GQLMCPConfigError, match="mutation-only"):
+            RouterGraphQLHandler(app, allow_mutation=True)

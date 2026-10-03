@@ -77,6 +77,11 @@ Rules worth knowing:
 - **Mutations are off by default** (`allow_mutation=True` to expose writes;
   `mutation_include=[...]` globs to whitelist specific write routes);
   `graphql_query` also refuses mutation documents.
+- **Mutation ordering**: per the GraphQL spec, mutation fields at the ROOT
+  execute serially in declaration order — with the grouped schema that means
+  writes in DIFFERENT domains are ordered; writes grouped under the SAME
+  domain run in parallel like query fields. When write order matters, put the
+  operations in separate domains or send separate mutation documents.
 - Untyped routes (no `response_model`/return annotation, raw `Response`,
   hidden routes, required header/cookie params) are **skipped with a warning**.
 - `include`/`exclude` fnmatch globs scope which routes enter the schema.

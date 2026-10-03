@@ -27,6 +27,10 @@ Schema shape + documentation wave (breaking).
 
 ### Added
 
+- Mutation execution semantics pinned by tests: cross-domain writes are
+  serial (spec-guaranteed at the mutation root); same-domain writes run in
+  parallel. Mutation-only schemas now fail fast with guidance (GraphQL
+  requires a Query root).
 - **Argument descriptions**: `Query()/Path()/Body(description=...)` metadata
   maps onto GraphQL argument descriptions, completing the doc chain
   (model docstrings → types, `Field(description)` → fields, endpoint
