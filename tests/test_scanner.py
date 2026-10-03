@@ -314,3 +314,29 @@ class TestQueryParameterModels:
         routes, skips = RouterScanner(app).scan()
         assert routes == []
         assert any("mixed with" in s.reason for s in skips)
+
+
+class TestIncludeRouter:
+    def test_routers_via_include_router_are_discovered(self):
+        from fastapi import APIRouter
+
+        inner = APIRouter()
+
+        @inner.get("/inner", response_model=ItemOut)
+        async def inner_route():
+            return ItemOut(id=1, name="i")
+
+        outer = APIRouter(prefix="/outer")
+        outer.include_router(inner)  # nested include
+
+        @outer.get("/own", response_model=ItemOut)
+        async def outer_route():
+            return ItemOut(id=2, name="o")
+
+        app = FastAPI()
+        app.include_router(outer)
+
+        routes, skips = RouterScanner(app).scan()
+        assert not skips
+        assert {r.path for r in routes} == {"/outer/inner", "/outer/own"}
+        assert {r.field_name for r in routes} == {"inner_route", "outer_route"}

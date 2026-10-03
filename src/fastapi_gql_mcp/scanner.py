@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -51,7 +51,7 @@ class ParamInfo:
 class RouteInfo:
     """Everything the schema builder needs about one routable endpoint."""
 
-    route: APIRoute = field(repr=False)
+    route: Any = field(repr=False)  # APIRoute or FastAPI >=0.142 include leaf
     method: str
     path: str
     field_name: str
@@ -183,6 +183,28 @@ def _matches(path: str, patterns: Sequence[str] | None) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns or ())
 
 
+def _iter_api_routes(routes: Iterable[Any]) -> Iterator[Any]:
+    """Flatten app.routes into scannable route objects (duck-typed).
+
+    FastAPI >= 0.142 wraps ``include_router`` results in a private
+    ``_IncludedRouter`` that resolves lazily; its ``effective_candidates()``
+    leaves (``_EffectiveRouteContext``) carry the PREFIX-RESOLVED path plus
+    the usual metadata (methods/response_model/dependant/tags). Older
+    FastAPI copies plain ``APIRoute`` objects flat into ``app.routes``.
+    Both shapes are yielded uniformly; everything else (Mount, WebSocket,
+    docs routes) is skipped.
+    """
+    for route in routes:
+        if isinstance(route, APIRoute):
+            yield route
+        elif hasattr(route, "effective_candidates"):
+            # include_router wrapper (nested includes recurse the same way)
+            yield from _iter_api_routes(route.effective_candidates())
+        elif hasattr(route, "dependant") and hasattr(route, "methods"):
+            # _EffectiveRouteContext leaf with the resolved path
+            yield route
+
+
 class RouterScanner:
     """Scans ``app.routes`` into ``RouteInfo`` / ``SkipRecord`` lists."""
 
@@ -211,9 +233,7 @@ class RouterScanner:
         routes: list[RouteInfo] = []
         skips: list[SkipRecord] = []
 
-        for r in self._app.routes:
-            if not isinstance(r, APIRoute):
-                continue  # Mount / WebSocket / static routes are out of scope
+        for r in _iter_api_routes(self._app.routes):
 
             route_methods = r.methods or set()
             verbs = sorted(route_methods & set(_VERB_PRIORITY), key=_VERB_PRIORITY.index)
@@ -272,7 +292,7 @@ class RouterScanner:
 
     def _build_route_info(
         self,
-        route: APIRoute,
+        route: Any,
         method: str,
         types: TypeBuilder,
         skips: list[SkipRecord],
@@ -366,7 +386,7 @@ class RouterScanner:
         )
 
     @staticmethod
-    def _response_annotation(route: APIRoute) -> Any:
+    def _response_annotation(route: Any) -> Any:
         response_model = route.response_model
         # Both an explicit response_model=None (Response-returning routes) and
         # the DefaultPlaceholder (unset) fall back to the typed return annotation.
