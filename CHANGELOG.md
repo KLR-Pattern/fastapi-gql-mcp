@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+
+- **`RouterMCP(auth=...)`**: optional fastmcp auth provider (e.g.
+  `GitHubProvider`) passed through to `FastMCP` untouched — the MCP
+  endpoint then speaks OAuth 2.1 (401 discovery, DCR, PKCE) and clients'
+  Bearer tokens travel into route calls via `passthrough_headers` like any
+  other caller's. The bridge verifies nothing. When `auth` is set,
+  `mount_to` also re-exposes the provider's `/.well-known/*` discovery
+  routes at the host app's root — the 401 challenge advertises them there
+  (RFC 8414), but the mount alone would shift them under the mount path.
+  `mount_to(..., auth_at_root=True)` goes further: MCP endpoint at `path`,
+  OAuth/discovery routes at the host root — for reusing an IdP app whose
+  registered callback URL lives at the root domain (subdirectory
+  redirect_path). Implemented by splicing the wrapped app's routes (host
+  routes keep precedence) and copying its middleware stack wholesale — a
+  plain `Mount("")` catch-all would silently shadow host routes added
+  later, and dropping the app-level middleware (auth verification,
+  request-context capture) silently 401s every request.
+
 ### Changed
 
 - **`headers_provider` removed; `passthrough_headers` defaults to

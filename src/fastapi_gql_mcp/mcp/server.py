@@ -9,7 +9,7 @@ from typing import Any, Literal
 from fastapi import FastAPI
 
 from fastapi_gql_mcp.domains import DomainRegistry
-from fastapi_gql_mcp.handler import RouterGraphQLHandler
+from fastapi_gql_mcp.handler import GQLMCPConfigError, RouterGraphQLHandler
 from fastapi_gql_mcp.mcp.tools import register_simple_tools
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,12 @@ class RouterMCP:
             verifying. Pass ``[]`` to disable forwarding entirely. With no
             HTTP request context (in-memory client) nothing is forwarded:
             protected routes answer 401.
+        auth: Optional ``fastmcp`` auth provider (e.g.
+            ``fastmcp.server.auth.providers.github.GitHubProvider``). Passed
+            through to ``FastMCP`` untouched: the MCP endpoint then answers
+            401 with OAuth discovery metadata, and clients' Bearer tokens
+            reach the routes via ``passthrough_headers`` like any other
+            caller's. The bridge itself verifies nothing.
         mode: ``simple`` registers get_schema + graphql_query;
             ``progressive`` registers the 4-layer tag-based disclosure
             (list_domains -> list_queries -> get_query_schema ->
@@ -79,6 +85,7 @@ class RouterMCP:
         progressive_threshold: int = PROGRESSIVE_THRESHOLD,
         mutation_include: Sequence[str] | None = None,
         passthrough_headers: Sequence[str] | None = None,
+        auth: Any | None = None,
     ) -> None:
         self._mode = mode
         self._progressive_threshold = progressive_threshold
@@ -93,7 +100,7 @@ class RouterMCP:
         )
         self._resolved_mode = self._resolve_mode(mode, app)
         self._domains = DomainRegistry(self._handler.routes)
-        self._mcp = self._build_mcp(name, allow_mutation)
+        self._mcp = self._build_mcp(name, allow_mutation, auth)
 
     def _resolve_mode(
         self, mode: Literal["auto", "simple", "progressive"], app: FastAPI
@@ -120,11 +127,11 @@ class RouterMCP:
     def mode(self) -> Literal["simple", "progressive"]:
         return self._resolved_mode
 
-    def _build_mcp(self, name: str, allow_mutation: bool) -> Any:
+    def _build_mcp(self, name: str, allow_mutation: bool, auth: Any | None = None) -> Any:
         # fastmcp is an optional extra; import lazily like nexusx does.
         from fastmcp import FastMCP
 
-        mcp = FastMCP(name)
+        mcp = FastMCP(name, auth=auth)
         if self._resolved_mode == "progressive":
             from fastapi_gql_mcp.mcp.progressive_tools import register_progressive_tools
 
@@ -157,7 +164,9 @@ class RouterMCP:
         """
         self._mcp.run(transport="http", host=host, port=port)
 
-    def mount_to(self, app: FastAPI, path: str = "/mcp") -> None:
+    def mount_to(
+        self, app: FastAPI, path: str = "/mcp", *, auth_at_root: bool = False
+    ) -> None:
         """Mount the MCP server into a FastAPI app (streamable HTTP).
 
         The endpoint is served at ``{path}/`` — e.g. ``/mcp/`` by default.
@@ -165,7 +174,45 @@ class RouterMCP:
         lifespan management (the app's own uvicorn lifespan drives it once).
         Mounting into a different app leaves it managed, but that app will not
         run the wrapped app's startup hooks — prefer mounting into the same app.
+
+        ``auth_at_root`` (requires ``auth=``): serve the MCP endpoint at
+        ``path`` but host the auth provider's routes — OAuth endpoints,
+        consent page, ``/.well-known/*`` discovery — at the host app's ROOT
+        instead of under the mount. Use this when the upstream IdP's
+        registered callback lives at the root domain (e.g. reusing an OAuth
+        app whose callback is ``/auth/callback`` via a ``redirect_path``
+        subdirectory).
         """
+        if auth_at_root and getattr(self._mcp, "auth", None) is None:
+            raise GQLMCPConfigError(
+                "auth_at_root requires RouterMCP(..., auth=...) — no auth provider set"
+            )
+        if auth_at_root:
+            http_app = self._mcp.http_app(path=path)
+            if app is self._handler.invoker.app:
+                self._handler.invoker.disable_lifespan_management()
+            else:
+                logger.warning(
+                    "Mounting fastapi-gql-mcp into a different app than the one it wraps: "
+                    "the wrapped app's lifespan events will not fire unless "
+                    "something else runs them."
+                )
+            _compose_lifespan(app, http_app)
+            # No Mount("") here: it is a catch-all, so any host route added
+            # AFTER this call would silently 404 behind it. Instead, splice
+            # the routes (appended last — host routes keep precedence) and
+            # copy the sub-app's whole middleware stack. The routes only
+            # CARRY the per-route guard (RequireAuthMiddleware); everything
+            # else — AuthenticationMiddleware (sets scope["user"] via
+            # verify_token) and RequestContextMiddleware (captures inbound
+            # headers so tool calls can forward them) — lives at app level
+            # and must move over, or requests 401 and per-caller headers
+            # silently stop reaching the routes.
+            for route in http_app.routes:
+                app.router.routes.append(route)
+            for middleware in getattr(http_app, "user_middleware", []):
+                app.add_middleware(middleware.cls, **(middleware.kwargs or {}))
+            return
         if app is self._handler.invoker.app:
             # Same app: its server lifespan already (or will) run; a second
             # LifespanManager would drive startup twice.
@@ -184,3 +231,13 @@ class RouterMCP:
         # host app's lifespan.
         _compose_lifespan(app, http_app)
         app.mount(path, http_app)
+        # OAuth discovery (RFC 9728): the 401 challenge advertises the
+        # protected-resource metadata at a HOST-ROOT well-known URL, but the
+        # mount above shifts the auth routes under `path` — re-expose the
+        # well-known ones at the root where clients expect them.
+        auth = getattr(self._mcp, "auth", None)
+        if auth is not None:
+            existing = {getattr(r, "path", None) for r in app.router.routes}
+            for route in auth.get_well_known_routes():
+                if route.path not in existing:
+                    app.router.routes.append(route)
