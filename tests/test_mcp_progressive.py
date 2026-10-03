@@ -1,9 +1,10 @@
 """MCP progressive mode: 4-layer disclosure over the domain tree."""
 
 import json
+from typing import Annotated
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastmcp import Client
 from pydantic import BaseModel
 
@@ -79,14 +80,18 @@ class TestListQueries:
         app = FastAPI()
 
         @app.get("/things", response_model=Out, tags=["t"])
-        async def things(limit: int = 5):
+        async def things(
+            limit: Annotated[int, Query(description="how many things")] = 5,
+        ):
             return Out(id=1, name="x")
 
         m = RouterMCP(app, mode="progressive")
         async with Client(m.mcp) as client:
             result = payload(await client.call_tool("list_queries", {"domain": "t"}))
         query = result["data"]["queries"][0]
-        assert query["args"] == [{"name": "limit", "type": "Int"}]
+        assert query["args"] == [
+            {"name": "limit", "type": "Int", "description": "how many things"}
+        ]
 
     async def test_unknown_domain_error(self, mcp):
         async with Client(mcp.mcp) as client:

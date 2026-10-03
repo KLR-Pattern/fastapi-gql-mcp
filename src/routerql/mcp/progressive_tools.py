@@ -45,7 +45,11 @@ def _parse_domain(domain: str) -> tuple[str, ...]:
 
 def _field_brief(name: str, field: Any) -> dict[str, Any]:
     args = [
-        {"name": arg_name, "type": str(arg.type)}
+        {
+            "name": arg_name,
+            "type": str(arg.type),
+            "description": arg.description,
+        }
         for arg_name, arg in (field.args or {}).items()
     ]
     return {
