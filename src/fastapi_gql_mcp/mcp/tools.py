@@ -26,6 +26,27 @@ _HINT_AFTER_SCHEMA = (
     "Write a GraphQL query against this schema and run it with graphql_query."
 )
 
+#: MCP client headers forwarded into route calls (the client's own
+#: credentials, e.g. Authorization from the agent's HTTP connection).
+_FORWARDED_HEADERS = frozenset(
+    {"cookie", "authorization", "x-api-key", "x-token"}
+)
+
+
+def _client_forwarded_headers() -> dict[str, str]:
+    """Headers of the MCP client's own HTTP request, if any (stdio: none)."""
+    try:
+        from fastmcp.server.dependencies import get_http_headers
+
+        return {
+            name: value
+            for name, value in get_http_headers(
+                include=set(_FORWARDED_HEADERS)
+            ).items()
+        }
+    except Exception:
+        return {}
+
 
 def register_executor_tools(
     mcp: FastMCP, handler: RouterGraphQLHandler, *, allow_mutation: bool
@@ -137,7 +158,11 @@ async def _execute(
             hint="Send the document to the matching tool.",
         )
     try:
-        result = await handler.execute(document, variables=variables)
+        result = await handler.execute(
+            document,
+            variables=variables,
+            forward_headers=_client_forwarded_headers(),
+        )
     except Exception as e:  # pragma: no cover - defensive
         return create_error_response(str(e), GQLMCPErrors.INTERNAL_ERROR)
 

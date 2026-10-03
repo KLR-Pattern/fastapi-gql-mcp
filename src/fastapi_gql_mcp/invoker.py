@@ -172,8 +172,19 @@ class RouteInvoker:
             await self._lifespan.__aexit__(None, None, None)
             self._lifespan = None
 
-    async def invoke(self, route: RouteInfo, kwargs: Mapping[str, Any]) -> Any:
-        """Execute one route and return its JSON response."""
+    async def invoke(
+        self,
+        route: RouteInfo,
+        kwargs: Mapping[str, Any],
+        *,
+        forward_headers: Mapping[str, str] | None = None,
+    ) -> Any:
+        """Execute one route and return its JSON response.
+
+        Header precedence: ``forward_headers`` (the caller's own request
+        credentials, e.g. a browser session cookie or an MCP client's
+        Authorization header) override anything from ``headers_provider``.
+        """
         await self.start()
         client = self._client
         if client is None:  # pragma: no cover - start() guarantees a client
@@ -185,6 +196,10 @@ class RouteInvoker:
             if inspect.isawaitable(provided):
                 provided = await provided
             extra_headers = {str(k): str(v) for k, v in dict(provided).items()}
+        if forward_headers:
+            extra_headers.update(
+                {str(k): str(v) for k, v in dict(forward_headers).items()}
+            )
 
         plan = build_request(route, kwargs, extra_headers)
         response = await client.request(

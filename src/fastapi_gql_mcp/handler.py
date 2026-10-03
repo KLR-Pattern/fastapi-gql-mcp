@@ -6,7 +6,7 @@ configuration problems surface at startup, not at first query.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from graphql import GraphQLSchema, graphql, print_schema
@@ -76,14 +76,21 @@ class RouterGraphQLHandler:
         *,
         variables: dict[str, Any] | None = None,
         operation_name: str | None = None,
+        forward_headers: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
-        """Execute a GraphQL query against the app's routes."""
+        """Execute a GraphQL query against the app's routes.
+
+        ``forward_headers`` carry THIS caller's credentials (cookie /
+        authorization) into every route call, overriding headers_provider —
+        so the agent queries with its own identity.
+        """
         await self._invoker.start()
         result = await graphql(
             self._schema,
             query,
             variable_values=variables or {},
             operation_name=operation_name,
+            context_value={"forward_headers": dict(forward_headers or {})},
         )
         payload: dict[str, Any] = {}
         if result.data is not None:
@@ -102,6 +109,7 @@ class RouterGraphQLHandler:
         *,
         graphql_path: str = "/graphql",
         graphiql_path: str = "/graphiql",
+        forwarded_headers: Sequence[str] | None = None,
     ) -> None:
         """Serve a GraphiQL playground + GraphQL HTTP endpoint on a FastAPI app.
 
@@ -113,7 +121,10 @@ class RouterGraphQLHandler:
         if app is self._invoker.app:
             self._invoker.disable_lifespan_management()
         router = create_graphql_router(
-            self, graphql_path=graphql_path, graphiql_path=graphiql_path
+            self,
+            graphql_path=graphql_path,
+            graphiql_path=graphiql_path,
+            forwarded_headers=forwarded_headers,
         )
         app.include_router(router)
 

@@ -13,7 +13,7 @@ is a request FastAPI will not 422.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from graphql import (
@@ -75,7 +75,15 @@ def _arguments(route: RouteInfo, types: TypeBuilder) -> dict[str, GraphQLArgumen
 
 def _resolver(route: RouteInfo, invoker: RouteInvoker) -> Any:
     async def resolve(_root: Any, _info: Any, **kwargs: Any) -> Any:
-        return await invoker.invoke(route, kwargs)
+        # Per-execution credentials (browser cookie / MCP client header)
+        # travel via the GraphQL context; see RouterGraphQLHandler.execute.
+        forward: Mapping[str, str] = {}
+        context = getattr(_info, "context", None)
+        if isinstance(context, dict):
+            raw = context.get("forward_headers")
+            if isinstance(raw, Mapping):
+                forward = raw
+        return await invoker.invoke(route, kwargs, forward_headers=forward)
 
     return resolve
 

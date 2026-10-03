@@ -120,3 +120,78 @@ class TestGraphqlHttp:
                 response = await c.get("/graphql")
         assert response.status_code == 405
         assert response.json()["usage"]["playground"] == "/graphiql"
+
+
+class TestCredentialForwarding:
+    async def test_graphql_forwards_cookie_to_protected_route(self):
+        from fastapi import Depends, HTTPException, Request
+
+        app = FastAPI()
+
+        def session(request: Request) -> str:
+            token = request.cookies.get("session")
+            if token != "s3cret":
+                raise HTTPException(status_code=401, detail="no session")
+            return token
+
+        @app.get("/private", response_model=Out, tags=["demo"])
+        async def private(user: str = Depends(session)):
+            return Out(id=1, name=f"user:{user}")
+
+        handler = RouterGraphQLHandler(app)
+        handler.mount_graphql(app)
+        async with LifespanManager(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+                no_cookie = await c.post(
+                    "/graphql", json={"query": "{ demo { private { name } } }"}
+                )
+                with_cookie = await c.post(
+                    "/graphql",
+                    json={"query": "{ demo { private { name } } }"},
+                    headers={"cookie": "session=s3cret"},
+                )
+        # Without credentials the field fails (401); with the cookie the
+        # caller's own session reaches the route.
+        assert no_cookie.json()["data"]["demo"]["private"] is None
+        assert no_cookie.json()["errors"][0]["extensions"]["code"] == "HTTP_401"
+        assert with_cookie.json() == {
+            "data": {"demo": {"private": {"name": "user:s3cret"}}}
+        }
+        await handler.aclose()
+
+    async def test_forwarding_can_be_disabled(self):
+        app = FastAPI()
+
+        @app.get("/who", response_model=Out, tags=["demo"])
+        async def who():
+            return Out(id=1, name="pub")
+
+        handler = RouterGraphQLHandler(app)
+        handler.mount_graphql(app, graphql_path="/g", graphiql_path="/p", forwarded_headers=())
+        async with LifespanManager(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+                r = await c.post(
+                    "/g",
+                    json={"query": "{ demo { who { name } } }"},
+                    headers={"cookie": "x=1"},
+                )
+        assert r.json() == {"data": {"demo": {"who": {"name": "pub"}}}}
+        await handler.aclose()
+
+    async def test_execute_forward_headers_override_provider(self):
+        app = FastAPI()
+
+        @app.get("/me", response_model=Out, tags=["demo"])
+        async def me():
+            return Out(id=1, name="ok")
+
+        handler = RouterGraphQLHandler(
+            app, headers_provider=lambda: {"x-token": "provider-token"}
+        )
+        result = await handler.execute(
+            "{ demo { me { name } } }", forward_headers={"x-token": "caller-token"}
+        )
+        assert result == {"data": {"demo": {"me": {"name": "ok"}}}}
+        await handler.aclose()
