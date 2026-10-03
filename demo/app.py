@@ -133,7 +133,7 @@ def create_app() -> FastAPI:
         yield
         print("[demo] shutdown")
 
-    app = FastAPI(title="routerql demo", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="routerql demo", version="0.3.0", lifespan=lifespan)
     app.state.users = {
         1: {"id": 1, "name": "alice", "email": "alice@shop.io", "role": "admin"},
         2: {"id": 2, "name": "bob", "email": "bob@shop.io", "role": "member"},

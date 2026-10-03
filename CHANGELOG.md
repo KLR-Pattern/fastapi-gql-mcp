@@ -1,8 +1,36 @@
 # Changelog
 
+## 0.3.0 (2026-10-03)
+
+Schema shape + documentation wave (breaking).
+
+### Changed
+
+- **Domain-grouped schema (UseCaseService-style hierarchy)**: fields live
+  under their tag domain tree — a route tagged `shop:catalog` answers at
+  `{ shop { catalog { list_products } } }`. Untagged routes join the domain of
+  their first path segment. Domain SDL fragments now show the exact grouped
+  address an agent should query.
+- **GraphQL field names now come from the endpoint function name** (e.g.
+  `async def get_user` → `get_user`) instead of being reconstructed from the
+  URL path + verb. Path/query/body parameters still become the field's
+  arguments. Two routes sharing a function name fail fast with
+  `DuplicateFieldError` (previously the `_by_{param}` suffix silently
+  disambiguated collection/item pairs).
+
+### Added
+
+- **Argument descriptions**: `Query()/Path()/Body(description=...)` metadata
+  maps onto GraphQL argument descriptions, completing the doc chain
+  (model docstrings → types, `Field(description)` → fields, endpoint
+  docstrings/`summary=` → fields).
+- Runnable demo suite: `python -m demo` (all-in-one server, progressive mode),
+  `demo.mcp_stdio`, `demo.mcp_walkthrough`; full documentation coverage in the
+  demo app for inspection.
+
 ## 0.2.0 (2026-10-03)
 
-P2/P3 feature wave over the 0.1 core.
+Feature wave over the 0.1 core.
 
 ### Added
 
@@ -20,23 +48,7 @@ P2/P3 feature wave over the 0.1 core.
   accepting `{query, variables, operationName}`.
 - **`mutation_include`** glob whitelist: with `allow_mutation=True`, write
   routes must match to become mutations.
-- Restructured `demo/` nexusx-style: `python -m demo` (all-in-one server),
-  `demo.mcp_stdio`, `demo.mcp_walkthrough` (in-memory agent walkthrough);
-  richer demo app (query parameter models, tag domains, skip examples).
-
-### Changed
-
-- **Domain-grouped schema (UseCaseService-style hierarchy)**: fields live
-  under their tag domain tree — a route tagged `shop:catalog` answers at
-  `{ shop { catalog { list_products } } }`. Untagged routes join the domain of
-  their first path segment. Domain SDL fragments now show the exact grouped
-  address an agent should query.
-- **GraphQL field names now come from the endpoint function name** (e.g.
-  `async def get_user` → `get_user`) instead of being reconstructed from the
-  URL path + verb. Path/query/body parameters still become the field's
-  arguments. Two routes sharing a function name fail fast with
-  `DuplicateFieldError` (previously the `_by_{param}` suffix silently
-  disambiguated collection/item pairs).
+- Restructured `demo/` nexusx-style.
 
 ### Fixed
 

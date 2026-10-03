@@ -22,10 +22,13 @@ composition, whole-payload responses. routerql instead derives a **GraphQL
 schema** from your routes (Apollo's "GraphQL as the MCP contract" pattern), so
 agents get:
 
-- **2-3 constant tools** — `get_schema`, `graphql_query` (+ `graphql_mutation`)
+- **a constant tool set** (2 in simple mode, up to 6 with progressive
+  disclosure) — never one tool per endpoint
 - **field-level selection** — fetch `{ id name }`, not the whole payload
 - **composition** — combine several routes in one query; a failing route nulls
   only its own field
+- **your docs, verbatim** — docstrings and `description=` metadata travel into
+  the schema the agent reads
 - **real auth** — queries run through the actual ASGI app, so `Depends`,
   middleware and headers apply; pass credentials via `headers_provider`
 
@@ -43,10 +46,10 @@ agents get:
 
 ```
 FastAPI app ──① RouterScanner introspects app.routes ──▶ GraphQLSchema (graphql-core)
-                   GET → Query field; POST/PUT/PATCH/DELETE → Mutation field
-                   path/query/body params → args; response_model → output type
+                   GET → Query leaf; POST/PUT/PATCH/DELETE → Mutation leaf
+                   route tags → domain groups; params → args; response_model → type
               ◀──② RouteInvoker (httpx ASGITransport + asgi-lifespan)
-              Agent via MCP: get_schema + graphql_query(/graphql_mutation)
+              Agent via MCP: discovery tools + graphql_query(/graphql_mutation)
 ```
 
 | Endpoint | GraphQL field |
@@ -55,15 +58,16 @@ FastAPI app ──① RouterScanner introspects app.routes ──▶ GraphQLSche
 | `async def get_item` on `GET /items/{item_id}` (tag `shop:catalog`) | `shop.catalog.get_item(item_id: Int!): ItemOut` |
 | `async def create_item` on `POST /items` (tag `shop:catalog`) | `shop.catalog.create_item(payload: ItemCreateInput!): ItemOut` |
 
-**Fields are grouped by the tag-derived domain tree** (UseCaseService-style
-hierarchy): a route tagged `shop:catalog` answers at
-`{ shop { catalog { list_products { name } } } }`. Untagged routes fall into
-the domain of their first path segment, so every field has a group.
+Two rules define the shape:
 
-**Leaf field names are the endpoint function names** — the developer's own
-vocabulary, no URL reconstruction. Function names are unique only per module,
-so two routes sharing a name fail fast with a `DuplicateFieldError` (rename
-one function or exclude one route).
+- **Fields are grouped by the tag-derived domain tree** (UseCaseService-style
+  hierarchy): a route tagged `shop:catalog` answers at
+  `{ shop { catalog { list_products { name } } } }`. Untagged routes fall into
+  the domain of their first path segment, so every field has a group.
+- **Leaf field names are the endpoint function names** — the developer's own
+  vocabulary, no URL reconstruction. Function names are unique only per module,
+  so two routes sharing a name fail fast with a `DuplicateFieldError` (rename
+  one function or exclude one route).
 
 Rules worth knowing:
 
@@ -78,10 +82,11 @@ Rules worth knowing:
 - A lone `Annotated[FilterModel, Query()]` flattens into individual query
   arguments (FastAPI Query Parameter Models).
 - Same-named Pydantic classes from different modules get qualified type names.
-- **Descriptions flow into the schema**: model docstrings → type descriptions,
-  `Field(description=...)` → field descriptions, endpoint docstrings (or
-  `summary=`) → field descriptions, and `Query()/Body(description=...)` →
-  argument descriptions.
+- **Descriptions flow into the schema** — model docstrings → type
+  descriptions, `Field(description=...)` → field descriptions, endpoint
+  docstrings (or `summary=`) → field descriptions,
+  `Query()/Path()/Body(description=...)` → argument descriptions. They surface
+  in GraphiQL hover, introspection and every MCP discovery tool.
 
 ## Installation
 
@@ -111,13 +116,15 @@ Above `progressive_threshold` routes (default 25, `mode="auto"`), the toolset
 switches to a 4-layer walkthrough of the tag tree:
 
 ```
-list_domains ──▶ list_queries("billing:invoice") ──▶ get_query_schema(...) ──▶ graphql_query
+list_domains ──▶ list_queries("billing:invoice") ──▶ get_query_schema("billing:invoice") ──▶ graphql_query
+                     (list_mutations with allow_mutation=True)
 ```
 
-Each domain SDL fragment contains only that subtree's operations and the types
-they reach. **Discovery is scoped; execution is not** — `graphql_query` always
-runs against the full schema, so fields from different domains combine freely.
-Force either mode with `mode="simple" | "progressive"`.
+Each domain SDL fragment re-wraps the real group types along the path, so it
+shows **exactly the grouped query the agent must write** — nothing more, and
+with every description attached. **Discovery is scoped; execution is not**:
+`graphql_query` always runs against the full schema, so fields from different
+domains combine freely. Force either mode with `mode="simple" | "progressive"`.
 
 ### Mounted into the same app
 
@@ -164,7 +171,9 @@ to what the agent should be allowed to do (e.g. read-only), and combine with
 ## Demo
 
 The `demo/` directory runs a small shop app (users / catalog / orders / stats,
-auth via `x-token: demo-secret`) with every feature in play:
+auth via `x-token: demo-secret`) with every feature in play — including **full
+documentation coverage** so all four description chains are inspectable in
+GraphiQL:
 
 ```bash
 uv run --extra mcp python -m demo               # REST + /mcp/ + /graphiql + /graphql on :8010
@@ -172,8 +181,8 @@ uv run --extra mcp python -m demo.mcp_stdio     # stdio MCP server (Claude Deskt
 uv run --extra mcp python -m demo.mcp_walkthrough  # agent's-eye MCP walkthrough, no client needed
 ```
 
-`python -m demo` prints all endpoint URLs; `/now` is untyped on purpose so the
-skip warning is visible at startup.
+`python -m demo` prints all endpoint URLs and serves the grouped schema;
+`/now` is untyped on purpose so the skip warning is visible at startup.
 
 ## Development
 
@@ -185,7 +194,7 @@ uv run mypy src
 
 ## Status
 
-0.2.0 — see [CHANGELOG.md](CHANGELOG.md). Ideas welcome: GraphQL subscriptions
+0.3.0 — see [CHANGELOG.md](CHANGELOG.md). Ideas welcome: GraphQL subscriptions
 over SSE routes, response header pass-through, per-domain auth scopes.
 
 Design extracted from [nexusx](https://github.com/KLR-Pattern/nexusx)
