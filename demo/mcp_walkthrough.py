@@ -14,7 +14,7 @@ import json
 from fastmcp import Client
 
 from demo.app import DEMO_TOKEN, create_app
-from routerql import RouterMCP
+from fastapi_gql_mcp import RouterMCP
 
 
 def show(title: str, payload: object) -> None:
@@ -26,7 +26,7 @@ def show(title: str, payload: object) -> None:
 async def main() -> None:
     mcp = RouterMCP(
         create_app(),
-        name="routerql demo",
+        name="fastapi-gql-mcp demo",
         allow_mutation=True,
         # 13 routes < threshold, so force progressive to show the 4 layers;
         # "auto" would pick simple mode (get_schema + graphql_query).

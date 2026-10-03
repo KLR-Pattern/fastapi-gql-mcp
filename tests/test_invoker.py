@@ -7,8 +7,8 @@ from fastapi import FastAPI
 from graphql import GraphQLError
 from pydantic import BaseModel
 
-from routerql.invoker import RouteInvoker, RouterQLRuntimeError, build_request
-from routerql.scanner import RouterScanner
+from fastapi_gql_mcp.invoker import GQLMCPRuntimeError, RouteInvoker, build_request
+from fastapi_gql_mcp.scanner import RouterScanner
 
 
 class ItemOut(BaseModel):
@@ -124,7 +124,7 @@ class TestLifecycle:
         app, _ = build_app()
         invoker = RouteInvoker(app)
         await invoker.aclose()
-        with pytest.raises(RouterQLRuntimeError):
+        with pytest.raises(GQLMCPRuntimeError):
             await invoker.start()
 
     async def test_no_managed_lifespan(self):

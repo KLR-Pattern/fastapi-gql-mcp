@@ -1,7 +1,7 @@
 [project]
-name = "routerql"
+name = "fastapi-gql-mcp"
 version = "0.3.0"
-description = "Turn any FastAPI router into a GraphQL query layer + MCP server, zero decorators."
+description = "FastAPI → GraphQL → MCP: turn any FastAPI router into a GraphQL query layer + MCP server, zero decorators."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -22,7 +22,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/routerql"]
+packages = ["src/fastapi_gql_mcp"]
 
 [dependency-groups]
 dev = [

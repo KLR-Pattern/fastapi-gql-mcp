@@ -8,7 +8,7 @@ from fastapi import FastAPI, Query
 from fastmcp import Client
 from pydantic import BaseModel
 
-from routerql import RouterMCP
+from fastapi_gql_mcp import RouterMCP
 
 
 class Out(BaseModel):

@@ -15,7 +15,7 @@ from graphql import (
 )
 from pydantic import BaseModel, Field
 
-from routerql.type_builder import (
+from fastapi_gql_mcp.type_builder import (
     TypeBuilder,
     UnsupportedFieldTypeError,
     describe_literal_values,

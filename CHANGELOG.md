@@ -6,6 +6,13 @@ Schema shape + documentation wave (breaking).
 
 ### Changed
 
+- **Renamed from `routerql` to `fastapi-gql-mcp`** (package
+  `fastapi_gql_mcp`): the distribution name now carries both FastAPI and MCP.
+  Exception prefixes `RouterQL*` became `GQLMCP*`; `RouterMCP` /
+  `RouterGraphQLHandler` keep their Router-based names.
+
+### Changed
+
 - **Domain-grouped schema (UseCaseService-style hierarchy)**: fields live
   under their tag domain tree — a route tagged `shop:catalog` answers at
   `{ shop { catalog { list_products } } }`. Untagged routes join the domain of

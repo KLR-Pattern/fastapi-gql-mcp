@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, Header, Query
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from routerql.scanner import RouterScanner, SkipRecord
+from fastapi_gql_mcp.scanner import RouterScanner, SkipRecord
 
 
 class ItemOut(BaseModel):
@@ -273,7 +273,7 @@ class TestQueryParameterModels:
 
         from fastapi import Query
 
-        from routerql.handler import RouterGraphQLHandler
+        from fastapi_gql_mcp.handler import RouterGraphQLHandler
 
         class ItemFilter(BaseModel):
             category: str

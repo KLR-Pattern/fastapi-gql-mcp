@@ -29,15 +29,15 @@ from graphql import (
     Undefined,
 )
 
-from routerql.invoker import RouteInvoker
-from routerql.naming import validate_field_names
-from routerql.scanner import ParamInfo, RouteInfo
-from routerql.type_builder import TypeBuilder
+from fastapi_gql_mcp.invoker import RouteInvoker
+from fastapi_gql_mcp.naming import validate_field_names
+from fastapi_gql_mcp.scanner import ParamInfo, RouteInfo
+from fastapi_gql_mcp.type_builder import TypeBuilder
 
 logger = logging.getLogger(__name__)
 
 
-class RouterQLConfigError(ValueError):
+class GQLMCPConfigError(ValueError):
     """Raised when the scanned routes cannot form a usable schema."""
 
 
@@ -222,9 +222,9 @@ class SchemaBuilder:
         mutation_routes = [r for r in self._routes if r.is_mutation]
 
         if not query_routes and not mutation_routes:
-            raise RouterQLConfigError(
-                "routerql found no routable endpoints: every route was skipped "
-                "(see the routerql warning log for reasons)."
+            raise GQLMCPConfigError(
+                "fastapi-gql-mcp found no routable endpoints: every route was skipped "
+                "(see the fastapi-gql-mcp warning log for reasons)."
             )
 
         # Duplicate function-name check stays namespace-wide (Query / Mutation).
@@ -246,7 +246,7 @@ class SchemaBuilder:
         query_type = self._root_type(query_tree, mutation=False)
         mutation_type = self._root_type(mutation_tree, mutation=True)
         if query_type is None and mutation_type is None:  # pragma: no cover
-            raise RouterQLConfigError(
-                "routerql found no routable endpoints: every route was skipped."
+            raise GQLMCPConfigError(
+                "fastapi-gql-mcp found no routable endpoints: every route was skipped."
             )
         return GraphQLSchema(query=query_type, mutation=mutation_type)

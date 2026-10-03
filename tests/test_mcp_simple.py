@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastmcp import Client
 from pydantic import BaseModel
 
-from routerql import RouterMCP
+from fastapi_gql_mcp import RouterMCP
 
 
 class UserOut(BaseModel):

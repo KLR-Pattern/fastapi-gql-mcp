@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any
 from graphql import parse
 from graphql.language import OperationDefinitionNode, OperationType
 
-from routerql.mcp.errors import (
-    RouterQLErrors,
+from fastapi_gql_mcp.mcp.errors import (
+    GQLMCPErrors,
     create_error_response,
     create_success_response,
 )
@@ -20,7 +20,7 @@ from routerql.mcp.errors import (
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-    from routerql.handler import RouterGraphQLHandler
+    from fastapi_gql_mcp.handler import RouterGraphQLHandler
 
 _HINT_AFTER_SCHEMA = (
     "Write a GraphQL query against this schema and run it with graphql_query."
@@ -100,7 +100,7 @@ def register_simple_tools(
         try:
             return create_success_response({"sdl": handler.get_sdl()}, hint=_HINT_AFTER_SCHEMA)
         except Exception as e:  # pragma: no cover - defensive
-            return create_error_response(str(e), RouterQLErrors.INTERNAL_ERROR)
+            return create_error_response(str(e), GQLMCPErrors.INTERNAL_ERROR)
 
     register_executor_tools(mcp, handler, allow_mutation=allow_mutation)
 
@@ -132,22 +132,22 @@ async def _execute(
             f"graphql_query only accepts query documents; "
             f"{'queries' if mutation else 'mutations'} must go through "
             f"{'graphql_query' if mutation else 'graphql_mutation'}",
-            RouterQLErrors.MUTATION_DISABLED if not mutation
-            else RouterQLErrors.INVALID_QUERY,
+            GQLMCPErrors.MUTATION_DISABLED if not mutation
+            else GQLMCPErrors.INVALID_QUERY,
             hint="Send the document to the matching tool.",
         )
     try:
         result = await handler.execute(document, variables=variables)
     except Exception as e:  # pragma: no cover - defensive
-        return create_error_response(str(e), RouterQLErrors.INTERNAL_ERROR)
+        return create_error_response(str(e), GQLMCPErrors.INTERNAL_ERROR)
 
     errors = result.get("errors")
     if errors and "data" not in result:
         # Whole-document failure: parse/validation level.
         kind = (
-            RouterQLErrors.MUTATION_EXECUTION_ERROR
+            GQLMCPErrors.MUTATION_EXECUTION_ERROR
             if mutation
-            else RouterQLErrors.QUERY_EXECUTION_ERROR
+            else GQLMCPErrors.QUERY_EXECUTION_ERROR
         )
         return create_error_response(
             "; ".join(e.get("message", "") for e in errors),

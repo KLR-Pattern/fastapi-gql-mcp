@@ -23,9 +23,9 @@ from fastapi.utils import DefaultPlaceholder  # type: ignore[attr-defined]
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from routerql.domains import domains_for
-from routerql.naming import field_name_for
-from routerql.type_builder import TypeBuilder, UnsupportedFieldTypeError
+from fastapi_gql_mcp.domains import domains_for
+from fastapi_gql_mcp.naming import field_name_for
+from fastapi_gql_mcp.type_builder import TypeBuilder, UnsupportedFieldTypeError
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +265,7 @@ class RouterScanner:
 
         if skips:
             rendered = "; ".join(f"{s.method} {s.path}: {s.reason}" for s in skips)
-            logger.warning("routerql skipped %d route(s): %s", len(skips), rendered)
+            logger.warning("fastapi-gql-mcp skipped %d route(s): %s", len(skips), rendered)
         return routes, skips
 
     # ----------------------------------------------------------------- helpers

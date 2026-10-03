@@ -1,4 +1,4 @@
-"""Error taxonomy and response envelopes shared by routerql MCP tools."""
+"""Error taxonomy and response envelopes shared by fastapi-gql-mcp MCP tools."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Any
 
 
-class RouterQLErrors(str, Enum):
+class GQLMCPErrors(str, Enum):
     NO_ROUTES = "no_routes"
     INVALID_QUERY = "invalid_query"
     QUERY_EXECUTION_ERROR = "query_execution_error"
@@ -25,13 +25,13 @@ def create_success_response(data: Any, *, hint: str | None = None) -> dict[str, 
 
 
 def create_error_response(
-    error: str, error_type: RouterQLErrors | str, *, hint: str | None = None
+    error: str, error_type: GQLMCPErrors | str, *, hint: str | None = None
 ) -> dict[str, Any]:
     """Error envelope; ``hint`` suggests how to recover."""
     payload: dict[str, Any] = {
         "success": False,
         "error": error,
-        "error_type": error_type.value if isinstance(error_type, RouterQLErrors) else error_type,
+        "error_type": error_type.value if isinstance(error_type, GQLMCPErrors) else error_type,
     }
     if hint:
         payload["hint"] = hint

@@ -11,10 +11,10 @@ from typing import Any
 
 from graphql import GraphQLSchema, graphql, print_schema
 
-from routerql.invoker import HeadersProvider, RouteInvoker
-from routerql.scanner import RouteInfo, RouterScanner
-from routerql.schema_builder import RouterQLConfigError, SchemaBuilder
-from routerql.type_builder import TypeBuilder
+from fastapi_gql_mcp.invoker import HeadersProvider, RouteInvoker
+from fastapi_gql_mcp.scanner import RouteInfo, RouterScanner
+from fastapi_gql_mcp.schema_builder import GQLMCPConfigError, SchemaBuilder
+from fastapi_gql_mcp.type_builder import TypeBuilder
 
 
 class RouterGraphQLHandler:
@@ -105,10 +105,10 @@ class RouterGraphQLHandler:
     ) -> None:
         """Serve a GraphiQL playground + GraphQL HTTP endpoint on a FastAPI app.
 
-        Mounting into the SAME app that routerql wraps disables the invoker's
+        Mounting into the SAME app that fastapi-gql-mcp wraps disables the invoker's
         lifespan management (the app's own server lifespan drives it once).
         """
-        from routerql.http_api import create_graphql_router
+        from fastapi_gql_mcp.http_api import create_graphql_router
 
         if app is self._invoker.app:
             self._invoker.disable_lifespan_management()
@@ -118,4 +118,4 @@ class RouterGraphQLHandler:
         app.include_router(router)
 
 
-__all__ = ["RouterGraphQLHandler", "RouterQLConfigError"]
+__all__ = ["RouterGraphQLHandler", "GQLMCPConfigError"]

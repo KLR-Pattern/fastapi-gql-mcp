@@ -11,13 +11,13 @@ Endpoints:
 """
 
 from demo.app import DEMO_TOKEN, create_app
-from routerql import RouterMCP
+from fastapi_gql_mcp import RouterMCP
 
 app = create_app()
 
 mcp = RouterMCP(
     app,
-    name="routerql demo",
+    name="fastapi-gql-mcp demo",
     allow_mutation=True,
     # The demo app has 13 routes (< the 25-route threshold), so "auto" would
     # pick simple mode (get_schema + graphql_query). Force progressive to

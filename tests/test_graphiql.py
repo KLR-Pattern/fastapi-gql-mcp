@@ -6,7 +6,7 @@ from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from routerql import RouterGraphQLHandler
+from fastapi_gql_mcp import RouterGraphQLHandler
 
 
 class Out(BaseModel):

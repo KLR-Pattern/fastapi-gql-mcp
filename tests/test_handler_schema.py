@@ -4,9 +4,9 @@ import pytest
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from routerql.handler import RouterGraphQLHandler, RouterQLConfigError
-from routerql.schema_builder import DuplicateArgError
-from routerql.type_builder import TypeBuilder
+from fastapi_gql_mcp.handler import GQLMCPConfigError, RouterGraphQLHandler
+from fastapi_gql_mcp.schema_builder import DuplicateArgError
+from fastapi_gql_mcp.type_builder import TypeBuilder
 
 
 class ItemOut(BaseModel):
@@ -142,12 +142,12 @@ class TestConfigErrors:
         async def ping():
             return {}
 
-        with pytest.raises(RouterQLConfigError, match="no routable endpoints"):
+        with pytest.raises(GQLMCPConfigError, match="no routable endpoints"):
             RouterGraphQLHandler(app)
 
     def test_duplicate_arg_names(self):
-        from routerql.scanner import ParamInfo, RouteInfo
-        from routerql.schema_builder import _arguments
+        from fastapi_gql_mcp.scanner import ParamInfo, RouteInfo
+        from fastapi_gql_mcp.schema_builder import _arguments
 
         route = RouteInfo(
             route=None,  # type: ignore[arg-type]
@@ -173,7 +173,7 @@ class TestDuplicateEndpointNames:
         async def get_thing(b_id: int):  # noqa: F811 — the collision under test
             return ItemOut(id=b_id, name="b")
 
-        from routerql.naming import DuplicateFieldError
+        from fastapi_gql_mcp.naming import DuplicateFieldError
 
         with pytest.raises(DuplicateFieldError, match="Rename one endpoint function"):
             RouterGraphQLHandler(app)

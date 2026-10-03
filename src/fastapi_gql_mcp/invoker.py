@@ -20,7 +20,7 @@ from asgi_lifespan import LifespanManager
 from graphql import GraphQLError
 from httpx import ASGITransport, AsyncClient, Response
 
-from routerql.scanner import RouteInfo
+from fastapi_gql_mcp.scanner import RouteInfo
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ _BASE_HEADERS: dict[str, str] = {"accept": "application/json"}
 _MAX_ERROR_BODY = 500
 
 
-class RouterQLRuntimeError(RuntimeError):
+class GQLMCPRuntimeError(RuntimeError):
     """Raised when the invoker is used outside its lifecycle."""
 
 
@@ -144,7 +144,7 @@ class RouteInvoker:
     async def start(self) -> None:
         """Idempotently start the lifespan (when managed) and the HTTP client."""
         if self._closed:
-            raise RouterQLRuntimeError("RouteInvoker has been closed")
+            raise GQLMCPRuntimeError("RouteInvoker has been closed")
         if self._client is not None:
             return
         async with self._lock:
@@ -158,7 +158,7 @@ class RouteInvoker:
                 self._lifespan = manager
             self._client = AsyncClient(
                 transport=ASGITransport(app=self._app),
-                base_url="http://routerql.local",
+                base_url="http://fastapi-gql-mcp.local",
                 timeout=self._timeout,
             )
 
@@ -177,7 +177,7 @@ class RouteInvoker:
         await self.start()
         client = self._client
         if client is None:  # pragma: no cover - start() guarantees a client
-            raise RouterQLRuntimeError("RouteInvoker failed to start")
+            raise GQLMCPRuntimeError("RouteInvoker failed to start")
 
         extra_headers: dict[str, str] = {}
         if self._headers_provider is not None:

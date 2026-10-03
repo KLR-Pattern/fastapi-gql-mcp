@@ -1,11 +1,11 @@
-# routerql
+# fastapi-gql-mcp
 
 Turn any FastAPI router into a **GraphQL query layer + MCP server** — zero decorators,
 zero model changes.
 
 ```python
 from fastapi import FastAPI
-from routerql import RouterMCP
+from fastapi_gql_mcp import RouterMCP
 
 app = FastAPI()
 
@@ -18,7 +18,7 @@ mcp.run()  # stdio MCP server with get_schema + graphql_query tools
 ## Why
 
 Existing FastAPI→MCP bridges map **one tool per endpoint**: dozens of tools, no
-composition, whole-payload responses. routerql instead derives a **GraphQL
+composition, whole-payload responses. fastapi-gql-mcp instead derives a **GraphQL
 schema** from your routes (Apollo's "GraphQL as the MCP contract" pattern), so
 agents get:
 
@@ -34,7 +34,7 @@ agents get:
 
 ### Compared to the alternatives
 
-The other FastAPI→MCP bridges map endpoints to tools one-to-one. routerql
+The other FastAPI→MCP bridges map endpoints to tools one-to-one. fastapi-gql-mcp
 instead derives a GraphQL schema from your routes — GraphQL is the
 implementation vehicle, the contract the agent sees: few constant tools,
 field-level selection and cross-endpoint composition for free.
@@ -43,7 +43,7 @@ field-level selection and cross-endpoint composition for free.
 |---|---|---|---|---|
 | [fastapi-mcp](https://github.com/tadata-org/fastapi_mcp) (Tadata) | one per endpoint | ✗ | ✗ | none |
 | [FastMCP.from_openapi](https://gofastmcp.com/servers/openapi) | one per endpoint | ✗ | ✗ | none |
-| **routerql** | 2-6, constant | ✓ | ✓ | none |
+| **fastapi-gql-mcp** | 2-6, constant | ✓ | ✓ | none |
 
 ## How it works
 
@@ -94,8 +94,8 @@ Rules worth knowing:
 ## Installation
 
 ```bash
-uv add routerql            # core: GraphQL handler
-uv add 'routerql[mcp]'     # + MCP server (fastmcp)
+uv add fastapi-gql-mcp            # core: GraphQL handler
+uv add 'fastapi-gql-mcp[mcp]'     # + MCP server (fastmcp)
 ```
 
 ## Usage
@@ -139,7 +139,7 @@ mcp.handler.mount_graphql(app)       # GraphiQL at /graphiql + POST /graphql
 ### Plain GraphQL (no MCP)
 
 ```python
-from routerql import RouterGraphQLHandler
+from fastapi_gql_mcp import RouterGraphQLHandler
 
 handler = RouterGraphQLHandler(app)
 print(handler.get_sdl())

@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from routerql.graphiql import GRAPHIQL_HTML
+from fastapi_gql_mcp.graphiql import GRAPHIQL_HTML
 
 logger = logging.getLogger(__name__)
 

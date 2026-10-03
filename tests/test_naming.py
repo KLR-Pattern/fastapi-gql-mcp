@@ -4,7 +4,7 @@ import pytest
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from routerql.naming import DuplicateFieldError, field_name_for, validate_field_names
+from fastapi_gql_mcp.naming import DuplicateFieldError, field_name_for, validate_field_names
 
 
 class Out(BaseModel):

@@ -41,7 +41,7 @@ from graphql import (
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from routerql.scalars import SCALAR_MAP
+from fastapi_gql_mcp.scalars import SCALAR_MAP
 
 logger = logging.getLogger(__name__)
 

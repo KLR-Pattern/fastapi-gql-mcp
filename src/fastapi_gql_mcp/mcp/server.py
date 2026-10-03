@@ -8,10 +8,10 @@ from typing import Any, Literal
 
 from fastapi import FastAPI
 
-from routerql.domains import DomainRegistry
-from routerql.handler import RouterGraphQLHandler
-from routerql.invoker import HeadersProvider
-from routerql.mcp.tools import register_simple_tools
+from fastapi_gql_mcp.domains import DomainRegistry
+from fastapi_gql_mcp.handler import RouterGraphQLHandler
+from fastapi_gql_mcp.invoker import HeadersProvider
+from fastapi_gql_mcp.mcp.tools import register_simple_tools
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ class RouterMCP:
         self,
         app: FastAPI,
         *,
-        name: str = "routerql API",
+        name: str = "fastapi-gql-mcp API",
         include: Sequence[str] | None = None,
         exclude: Sequence[str] | None = None,
         allow_mutation: bool = False,
@@ -124,7 +124,7 @@ class RouterMCP:
 
         mcp = FastMCP(name)
         if self._resolved_mode == "progressive":
-            from routerql.mcp.progressive_tools import register_progressive_tools
+            from fastapi_gql_mcp.mcp.progressive_tools import register_progressive_tools
 
             register_progressive_tools(
                 mcp, self._handler, self._domains, allow_mutation=allow_mutation
@@ -153,7 +153,7 @@ class RouterMCP:
         """Mount the MCP server into a FastAPI app (streamable HTTP).
 
         The endpoint is served at ``{path}/`` — e.g. ``/mcp/`` by default.
-        Mounting into the SAME app that routerql wraps disables the invoker's
+        Mounting into the SAME app that fastapi-gql-mcp wraps disables the invoker's
         lifespan management (the app's own uvicorn lifespan drives it once).
         Mounting into a different app leaves it managed, but that app will not
         run the wrapped app's startup hooks — prefer mounting into the same app.
@@ -164,7 +164,7 @@ class RouterMCP:
             self._handler.invoker.disable_lifespan_management()
         else:
             logger.warning(
-                "Mounting routerql into a different app than the one it wraps: "
+                "Mounting fastapi-gql-mcp into a different app than the one it wraps: "
                 "the wrapped app's lifespan events will not fire unless "
                 "something else runs them."
             )

@@ -3,8 +3,8 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from routerql.domains import DomainRegistry, domains_for
-from routerql.scanner import RouterScanner
+from fastapi_gql_mcp.domains import DomainRegistry, domains_for
+from fastapi_gql_mcp.scanner import RouterScanner
 
 
 class Out(BaseModel):

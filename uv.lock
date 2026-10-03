@@ -609,6 +609,52 @@ wheels = [
 ]
 
 [[package]]
+name = "fastapi-gql-mcp"
+version = "0.3.0"
+source = { editable = "." }
+dependencies = [
+    { name = "asgi-lifespan" },
+    { name = "fastapi" },
+    { name = "graphql-core" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+mcp = [
+    { name = "fastmcp" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "fastmcp" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asgi-lifespan", specifier = ">=2.1" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=3.1,<3.2" },
+    { name = "graphql-core", specifier = ">=3.2,<4" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
+provides-extras = ["mcp"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "fastmcp", specifier = ">=3.1.1" },
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "ruff", specifier = ">=0.6" },
+]
+
+[[package]]
 name = "fastmcp"
 version = "3.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1591,52 +1637,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/cf/0e/faf7c7e36630561e3e9611730c47510cd972dd5fde8f95941ff78f76accd/rich_rst-2.2.0.tar.gz", hash = "sha256:b1e6a67f8f694a6f36035624bf73e2b1a0a4be13edaf3ba5e654d9758b61073a", size = 326270, upload-time = "2026-09-27T19:12:42.163Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/4e/716b42bf066e180c1235783b46f095a5d871d05dca7006d2295aac29c491/rich_rst-2.2.0-py3-none-any.whl", hash = "sha256:1ea1c43813dc4a8d86475fce27ffb74e0ada3d4656c9f8130ba2a59868055fe9", size = 279274, upload-time = "2026-09-27T19:12:40.548Z" },
-]
-
-[[package]]
-name = "routerql"
-version = "0.3.0"
-source = { editable = "." }
-dependencies = [
-    { name = "asgi-lifespan" },
-    { name = "fastapi" },
-    { name = "graphql-core" },
-    { name = "httpx" },
-    { name = "pydantic" },
-]
-
-[package.optional-dependencies]
-mcp = [
-    { name = "fastmcp" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "fastmcp" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "asgi-lifespan", specifier = ">=2.1" },
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=3.1,<3.2" },
-    { name = "graphql-core", specifier = ">=3.2,<4" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "pydantic", specifier = ">=2.7" },
-]
-provides-extras = ["mcp"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "fastmcp", specifier = ">=3.1.1" },
-    { name = "mypy", specifier = ">=1.11" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.24" },
-    { name = "ruff", specifier = ">=0.6" },
 ]
 
 [[package]]

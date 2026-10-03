@@ -1,4 +1,4 @@
-"""The routerql demo app: a small shop with users, catalog, orders and stats.
+"""The fastapi-gql-mcp demo app: a small shop with users, catalog, orders and stats.
 
 Feature coverage on purpose:
 
@@ -133,7 +133,7 @@ def create_app() -> FastAPI:
         yield
         print("[demo] shutdown")
 
-    app = FastAPI(title="routerql demo", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="fastapi-gql-mcp demo", version="0.3.0", lifespan=lifespan)
     app.state.users = {
         1: {"id": 1, "name": "alice", "email": "alice@shop.io", "role": "admin"},
         2: {"id": 2, "name": "bob", "email": "bob@shop.io", "role": "member"},
@@ -304,7 +304,7 @@ def create_app() -> FastAPI:
 
     @app.get("/now")
     async def now():
-        """Untyped on purpose — routerql skips this route with a warning."""
+        """Untyped on purpose — fastapi-gql-mcp skips this route with a warning."""
         return {"now": datetime.now(UTC).isoformat()}
 
     return app

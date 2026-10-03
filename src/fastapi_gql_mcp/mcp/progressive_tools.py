@@ -25,18 +25,18 @@ from graphql import (
     print_schema,
 )
 
-from routerql.domains import DomainRegistry
-from routerql.mcp.errors import (
-    RouterQLErrors,
+from fastapi_gql_mcp.domains import DomainRegistry
+from fastapi_gql_mcp.mcp.errors import (
+    GQLMCPErrors,
     create_error_response,
     create_success_response,
 )
-from routerql.mcp.tools import register_executor_tools
+from fastapi_gql_mcp.mcp.tools import register_executor_tools
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-    from routerql.handler import RouterGraphQLHandler
+    from fastapi_gql_mcp.handler import RouterGraphQLHandler
 
 
 def _parse_domain(domain: str) -> tuple[str, ...]:
@@ -87,7 +87,7 @@ def _domain_sdl(
     (``Query { shop { catalog { ... } } }``) while graphql-core auto-collects
     only the reachable types.
     """
-    from routerql.schema_builder import group_type_name
+    from fastapi_gql_mcp.schema_builder import group_type_name
 
     queries, mutations = registry.subtree_fields(path)
     if not queries and not mutations:
@@ -243,7 +243,7 @@ def register_progressive_tools(
         if sdl is None:
             return create_error_response(
                 f"Domain '{domain}' has no GraphQL operations.",
-                RouterQLErrors.DOMAIN_NOT_FOUND,
+                GQLMCPErrors.DOMAIN_NOT_FOUND,
                 hint="Pick a domain from list_domains that carries operations.",
             )
         return create_success_response(
@@ -262,7 +262,7 @@ def _unknown_domain(domain: str, registry: DomainRegistry) -> dict[str, Any]:
     ]
     return create_error_response(
         f"Unknown domain '{domain}'.",
-        RouterQLErrors.DOMAIN_NOT_FOUND,
+        GQLMCPErrors.DOMAIN_NOT_FOUND,
         hint=f"Available top-level domains: {', '.join(available)}. "
         f"Use list_domains to browse the full tree.",
     )
