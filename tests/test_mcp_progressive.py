@@ -67,13 +67,13 @@ class TestListQueries:
         async with Client(mcp.mcp) as client:
             result = payload(await client.call_tool("list_queries", {"domain": "iam"}))
         names = [q["name"] for q in result["data"]["queries"]]
-        assert "get_users" in names and "get_roles" in names
-        assert "get_invoices" not in names
+        assert "users" in names and "roles" in names
+        assert "invoices" not in names
 
     async def test_deep_domain_path(self, mcp):
         async with Client(mcp.mcp) as client:
             result = payload(await client.call_tool("list_queries", {"domain": "iam:users"}))
-        assert [q["name"] for q in result["data"]["queries"]] == ["get_users"]
+        assert [q["name"] for q in result["data"]["queries"]] == ["users"]
 
     async def test_args_brief(self, mcp):
         app = FastAPI()
@@ -98,7 +98,7 @@ class TestListQueries:
     async def test_list_mutations(self, mcp):
         async with Client(mcp.mcp) as client:
             result = payload(await client.call_tool("list_mutations", {"domain": "iam"}))
-        assert [m["name"] for m in result["data"]["mutations"]] == ["create_users"]
+        assert [m["name"] for m in result["data"]["mutations"]] == ["create_user"]
 
 
 class TestGetQuerySchema:
@@ -106,11 +106,11 @@ class TestGetQuerySchema:
         async with Client(mcp.mcp) as client:
             result = payload(await client.call_tool("get_query_schema", {"domain": "iam"}))
         sdl = result["data"]["sdl"]
-        assert "get_users" in sdl and "get_roles" in sdl
-        assert "get_invoices" not in sdl
+        assert "users" in sdl and "roles" in sdl
+        assert "invoices" not in sdl
         assert "type Out {" in sdl  # reachable shared type included
         assert "type Mutation {" in sdl  # subtree mutation included
-        assert "create_users" in sdl
+        assert "create_user" in sdl
 
     async def test_leaf_fragment_excludes_siblings(self, mcp):
         async with Client(mcp.mcp) as client:
@@ -118,9 +118,9 @@ class TestGetQuerySchema:
                 await client.call_tool("get_query_schema", {"domain": "iam:roles"})
             )
         sdl = result["data"]["sdl"]
-        assert "get_roles" in sdl
-        assert "get_users" not in sdl
-        assert "create_users" not in sdl
+        assert "roles" in sdl
+        assert "users" not in sdl
+        assert "create_user" not in sdl
 
 
 class TestExecutionNotScoped:
@@ -132,7 +132,7 @@ class TestExecutionNotScoped:
                 await client.call_tool(
                     "graphql_query",
                     {
-                        "query": "{ iam: get_roles { name } billing: get_invoices"
+                        "query": "{ iam: roles { name } billing: invoices"
                         " { name } }"
                     },
                 )
@@ -146,7 +146,7 @@ class TestExecutionNotScoped:
             result = payload(
                 await client.call_tool(
                     "graphql_mutation",
-                    {"mutation": 'mutation { create_users(payload: {name: "n"}) { id } }'},
+                    {"mutation": 'mutation { create_user(payload: {name: "n"}) { id } }'},
                 )
             )
-        assert result["data"]["data"]["create_users"]["id"] == 9
+        assert result["data"]["data"]["create_user"]["id"] == 9

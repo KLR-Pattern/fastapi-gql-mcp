@@ -91,22 +91,22 @@ class TestDiscovery:
     def test_get_routes_discovered(self):
         routes, _ = scan(build_app())
         names = [r.field_name for r in routes]
-        assert "get_items" in names
-        assert "get_items_by_item_id" in names  # distinct from the collection field
+        assert "list_items" in names
+        assert "get_item" in names  # function names, no verb/param rewriting
 
     def test_field_names(self):
         routes, _ = scan(build_app(), allow_mutation=True)
-        assert by_field(routes, "get_items").path == "/items"
-        assert by_field(routes, "create_items").method == "POST"
+        assert by_field(routes, "list_items").path == "/items"
+        assert by_field(routes, "create_item").method == "POST"
 
     def test_path_params_required(self):
         routes, _ = scan(build_app())
-        r = by_field(routes, "get_items_by_item_id")
+        r = by_field(routes, "get_item")
         assert r is not None
 
     def test_depends_query_params_merged(self):
         routes, _ = scan(build_app())
-        r = by_field(routes, "get_items")
+        r = by_field(routes, "list_items")
         qnames = [p.name for p in r.query_params]
         assert "active" in qnames and "limit" in qnames
 
@@ -119,8 +119,8 @@ class TestMutationGating:
 
     def test_mutations_included_when_allowed(self):
         routes, skips = scan(build_app(), allow_mutation=True)
-        assert by_field(routes, "create_items").is_mutation
-        assert by_field(routes, "update_items_by_item_id").method == "PATCH"
+        assert by_field(routes, "create_item").is_mutation
+        assert by_field(routes, "patch_item").method == "PATCH"
 
 
 class TestFiltering:
@@ -140,7 +140,7 @@ class TestFiltering:
 class TestSkips:
     def test_untyped_response_skipped(self):
         routes, skips = scan(build_app())
-        assert "get_ping" not in [r.field_name for r in routes]
+        assert "ping" not in [r.field_name for r in routes]
         assert any("no typed response" in r for r in skip_reasons(skips, "/ping"))
 
     def test_raw_response_skipped(self):
@@ -170,7 +170,7 @@ class TestSkips:
 class TestParams:
     def test_query_param_defaults(self):
         routes, _ = scan(build_app())
-        r = by_field(routes, "get_items")
+        r = by_field(routes, "list_items")
         limit = next(p for p in r.query_params if p.name == "limit")
         assert limit.required is False
         assert limit.default == 10
@@ -179,7 +179,7 @@ class TestParams:
 
     def test_single_body_not_embedded(self):
         routes, _ = scan(build_app(), allow_mutation=True)
-        r = by_field(routes, "create_items")
+        r = by_field(routes, "create_item")
         assert len(r.body_params) == 1
         assert r.body_params[0].embed is False
 
@@ -190,17 +190,17 @@ class TestParams:
 
     def test_response_annotation(self):
         routes, _ = scan(build_app())
-        assert by_field(routes, "get_items_by_item_id").response_annotation is ItemOut
+        assert by_field(routes, "get_item").response_annotation is ItemOut
 
 
 class TestDomains:
     def test_tag_domains(self):
         routes, _ = scan(build_app())
-        assert by_field(routes, "get_items").domains == frozenset({("shop", "catalog")})
+        assert by_field(routes, "list_items").domains == frozenset({("shop", "catalog")})
 
     def test_untagged_falls_back_to_path(self):
         routes, _ = scan(build_app())
-        assert by_field(routes, "get_health").domains == frozenset({("health",)})
+        assert by_field(routes, "health").domains == frozenset({("health",)})
 
 
 class TestTypeTrials:
@@ -261,7 +261,7 @@ class TestQueryParameterModels:
 
         routes, skips = RouterScanner(app).scan()
         assert not skips
-        r = by_field(routes, "get_filtered")
+        r = by_field(routes, "filtered")
         q = {p.name: p for p in r.query_params}
         assert set(q) == {"category", "min_price", "pageSize"}
         assert q["category"].required is True
@@ -289,11 +289,11 @@ class TestQueryParameterModels:
 
         handler = RouterGraphQLHandler(app)
         sdl = handler.get_sdl()
-        assert "get_things(category: String!, limit: Int = 2): [ItemOut!]" in sdl
+        assert "things(category: String!, limit: Int = 2): [ItemOut!]" in sdl
         result = await handler.execute(
-            "{ get_things(category: \"tools\") { name } }"
+            "{ things(category: \"tools\") { name } }"
         )
-        assert result == {"data": {"get_things": [{"name": "tools"}, {"name": "tools"}]}}
+        assert result == {"data": {"things": [{"name": "tools"}, {"name": "tools"}]}}
         assert seen == {"category": "tools", "limit": 2}
         await handler.aclose()
 

@@ -49,11 +49,16 @@ FastAPI app ──① RouterScanner introspects app.routes ──▶ GraphQLSche
               Agent via MCP: get_schema + graphql_query(/graphql_mutation)
 ```
 
-| HTTP | GraphQL |
+| Endpoint | GraphQL field |
 |---|---|
-| `GET /items` | `get_items(limit: Int = 10): [ItemOut!]` |
-| `GET /items/{item_id}` | `get_items_by_item_id(item_id: Int!): ItemOut` |
-| `POST /items` (mutation enabled) | `create_items(payload: ItemCreateInput!): ItemOut` |
+| `async def list_items` on `GET /items` | `list_items(limit: Int = 10): [ItemOut!]` |
+| `async def get_item` on `GET /items/{item_id}` | `get_item(item_id: Int!): ItemOut` |
+| `async def create_item` on `POST /items` | `create_item(payload: ItemCreateInput!): ItemOut` |
+
+**Field names are the endpoint function names** — the developer's own
+vocabulary, no URL reconstruction. Function names are unique only per module,
+so two routes sharing a name fail fast with a `DuplicateFieldError` (rename
+one function or exclude one route).
 
 Rules worth knowing:
 
@@ -120,7 +125,7 @@ from routerql import RouterGraphQLHandler
 handler = RouterGraphQLHandler(app)
 print(handler.get_sdl())
 result = await handler.execute(
-    "query($id: Int!) { get_users_by_user_id(user_id: $id) { name } }",
+    "query($id: Int!) { get_user(user_id: $id) { name } }",
     variables={"id": 1},
 )
 ```

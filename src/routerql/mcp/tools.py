@@ -38,7 +38,8 @@ def register_executor_tools(
 
         Args:
             query: A GraphQL query document, e.g.
-                ``"{ get_items(limit: 5) { id name } }"``.
+                ``"{ list_items(limit: 5) { id name } }"`` — field names
+                are the endpoint function names.
             variables: Optional variables for the query document, e.g.
                 ``{"id": 3}`` used as ``$id``.
 
@@ -83,9 +84,9 @@ def register_simple_tools(
 
         This is the single discovery entry point. Every Query field maps to a
         GET route and every Mutation field (if present) to a write route:
-        ``get_items_by_item_id(item_id: Int!): ItemOut`` comes from
-        ``GET /items/{item_id}``. Read this before writing any query — the
-        field signatures here are authoritative.
+        an endpoint ``async def get_item(item_id: int)`` on ``GET /items/{id}``
+        yields ``get_item(item_id: Int!): ItemOut``. Read this before writing
+        any query — the field signatures here are authoritative.
 
         Responses are nullable per field: a route error nulls only its own
         field, so several routes can be combined in one query safely.

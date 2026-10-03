@@ -79,7 +79,7 @@ class TestGetSchema:
             result = payload(await client.call_tool("get_schema", {}))
         assert result["success"] is True
         assert "type Query {" in result["data"]["sdl"]
-        assert "get_users_by_user_id(user_id: Int!): UserOut" in result["data"]["sdl"]
+        assert "get_user(user_id: Int!): UserOut" in result["data"]["sdl"]
         assert result["hint"]
 
 
@@ -89,12 +89,12 @@ class TestGraphqlQuery:
             result = payload(
                 await client.call_tool(
                     "graphql_query",
-                    {"query": "{ get_users { id name } }"},
+                    {"query": "{ list_users { id name } }"},
                 )
             )
         assert result["success"] is True
         data = result["data"]["data"]
-        assert data["get_users"][0]["name"] == "alice"
+        assert data["list_users"][0]["name"] == "alice"
 
     async def test_query_variables(self, authed_mcp):
         async with Client(authed_mcp.mcp) as client:
@@ -102,13 +102,13 @@ class TestGraphqlQuery:
                 await client.call_tool(
                     "graphql_query",
                     {
-                        "query": "query($id: Int!) { get_users_by_user_id(user_id: $id)"
+                        "query": "query($id: Int!) { get_user(user_id: $id)"
                         " { name email } }",
                         "variables": {"id": 1},
                     },
                 )
             )
-        assert result["data"]["data"]["get_users_by_user_id"] == {
+        assert result["data"]["data"]["get_user"] == {
             "name": "alice",
             "email": "a@x.io",
         }
@@ -119,8 +119,8 @@ class TestGraphqlQuery:
                 await client.call_tool(
                     "graphql_query",
                     {
-                        "query": "{ a: get_users(active: false) { id } "
-                        "b: get_users_by_user_id(user_id: 2) { name } }"
+                        "query": "{ a: list_users(active: false) { id } "
+                        "b: get_user(user_id: 2) { name } }"
                     },
                 )
             )
@@ -134,8 +134,8 @@ class TestGraphqlQuery:
                 await client.call_tool(
                     "graphql_query",
                     {
-                        "query": "{ ok: get_users_by_user_id(user_id: 1) { name } "
-                        "missing: get_users_by_user_id(user_id: 99) { name } }"
+                        "query": "{ ok: get_user(user_id: 1) { name } "
+                        "missing: get_user(user_id: 99) { name } }"
                     },
                 )
             )
@@ -147,10 +147,10 @@ class TestGraphqlQuery:
     async def test_without_credentials_401(self, mcp):
         async with Client(mcp.mcp) as client:
             result = payload(
-                await client.call_tool("graphql_query", {"query": "{ get_users { id } }"})
+                await client.call_tool("graphql_query", {"query": "{ list_users { id } }"})
             )
         # The field failed (401) but the query itself was valid.
-        assert result["data"]["data"]["get_users"] is None
+        assert result["data"]["data"]["list_users"] is None
         assert result["data"]["errors"][0]["extensions"]["code"] == "HTTP_401"
 
     async def test_invalid_query_error_envelope(self, authed_mcp):
@@ -168,7 +168,7 @@ class TestGraphqlQuery:
             result = payload(
                 await client.call_tool(
                     "graphql_query",
-                    {"query": 'mutation { create_users(payload: {name: "x"}) { id } }'},
+                    {"query": 'mutation { create_user(payload: {name: "x"}) { id } }'},
                 )
             )
         assert result["success"] is False
@@ -182,12 +182,12 @@ class TestMutationTool:
                     "graphql_mutation",
                     {
                         "mutation": 'mutation($p: UserCreateInput!) '
-                        '{ create_users(payload: $p) { id name } }',
+                        '{ create_user(payload: $p) { id name } }',
                         "variables": {"p": {"name": "carol"}},
                     },
                 )
             )
-        assert result["data"]["data"]["create_users"]["name"] == "carol"
+        assert result["data"]["data"]["create_user"]["name"] == "carol"
 
     async def test_no_mutation_tool_when_disabled(self):
         mcp = RouterMCP(build_app(), name="ro")
@@ -208,10 +208,15 @@ class TestServerBehavior:
             id: int
 
         for i in range(30):
+            # distinct endpoint function names: duplicate names now fail fast
+            def make_handler(n: int):
+                async def handler() -> Out:
+                    return Out(id=n)
 
-            @big.get(f"/thing{i}", response_model=Out)
-            async def thing():
-                return Out(id=1)
+                handler.__name__ = f"thing_{n}"
+                return handler
+
+            big.get(f"/thing{i}", response_model=Out)(make_handler(i))
 
         mcp = RouterMCP(big, name="big", progressive_threshold=25)
         assert mcp.mode == "progressive"
@@ -299,10 +304,10 @@ class TestMutationWhitelist:
             allow_mutation=True,
             mutation_include=["/users"],
         )
-        assert "create_users" in mcp2.handler.get_sdl()
+        assert "create_user" in mcp2.handler.get_sdl()
 
     async def test_reads_unaffected_by_whitelist(self):
         app = build_app()
         mcp = RouterMCP(app, name="wl3", allow_mutation=True, mutation_include=["/none"])
         sdl = mcp.handler.get_sdl()
-        assert "get_users" in sdl
+        assert "list_users" in sdl

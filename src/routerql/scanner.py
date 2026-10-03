@@ -352,7 +352,7 @@ class RouterScanner:
             route=route,
             method=method,
             path=route.path,
-            field_name=field_name_for(method, route.path),
+            field_name=field_name_for(route),
             path_params=tuple(_to_param_info(p, path_param=True) for p in path_p),
             query_params=tuple(query_params),
             body_params=tuple(body_params),

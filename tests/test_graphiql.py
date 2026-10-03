@@ -51,9 +51,9 @@ class TestGraphiQLPage:
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
                 html = await c.get("/play")
-                result = await c.post("/gql", json={"query": "{ get_things { id } }"})
+                result = await c.post("/gql", json={"query": "{ things { id } }"})
         assert "url: '/gql'" in html.text
-        assert result.json() == {"data": {"get_things": [{"id": 1}]}}
+        assert result.json() == {"data": {"things": [{"id": 1}]}}
 
 
 class TestGraphqlHttp:
@@ -63,10 +63,10 @@ class TestGraphqlHttp:
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
                 response = await c.post(
-                    "/graphql", json={"query": "{ get_things { id name } }"}
+                    "/graphql", json={"query": "{ things { id name } }"}
                 )
         assert response.status_code == 200
-        assert response.json() == {"data": {"get_things": [{"id": 1, "name": "a"}]}}
+        assert response.json() == {"data": {"things": [{"id": 1, "name": "a"}]}}
 
     async def test_post_with_variables(self, mounted):
         app, _ = mounted
@@ -84,12 +84,12 @@ class TestGraphqlHttp:
                 response = await c.post(
                     "/graphql",
                     json={
-                        "query": "query($id: Int!) { get_items_by_item_id(item_id: $id)"
+                        "query": "query($id: Int!) { item(item_id: $id)"
                         " { name } }",
                         "variables": {"id": 7},
                     },
                 )
-        assert response.json() == {"data": {"get_items_by_item_id": {"name": "x"}}}
+        assert response.json() == {"data": {"item": {"name": "x"}}}
 
     async def test_validation_error_is_400(self, mounted):
         app, _ = mounted

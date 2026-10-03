@@ -21,6 +21,15 @@ P2/P3 feature wave over the 0.1 core.
 - **`mutation_include`** glob whitelist: with `allow_mutation=True`, write
   routes must match to become mutations.
 
+### Changed
+
+- **GraphQL field names now come from the endpoint function name** (e.g.
+  `async def get_user` → `get_user`) instead of being reconstructed from the
+  URL path + verb. Path/query/body parameters still become the field's
+  arguments. Two routes sharing a function name fail fast with
+  `DuplicateFieldError` (previously the `_by_{param}` suffix silently
+  disambiguated collection/item pairs).
+
 ### Fixed
 
 - Type descriptions no longer inherit BaseModel's docstring when a model has

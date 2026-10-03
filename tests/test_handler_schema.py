@@ -47,17 +47,17 @@ class TestSDLAndIntrospection:
     def test_sdl_contains_types_and_fields(self, handler):
         sdl = handler.get_sdl()
         assert "type Query {" in sdl
-        assert "get_items(limit: Int = 2): [ItemOut!]" in sdl
-        assert "get_items_by_item_id(item_id: Int!): ItemOut" in sdl
+        assert "list_items(limit: Int = 2): [ItemOut!]" in sdl
+        assert "get_item(item_id: Int!): ItemOut" in sdl
         assert "type Mutation {" in sdl
-        assert "create_items(payload: ItemCreateInput!): ItemOut" in sdl
+        assert "create_item(payload: ItemCreateInput!): ItemOut" in sdl
         assert "type ItemOut {" in sdl
         assert "input ItemCreateInput {" in sdl
 
     def test_mutation_gated_off(self):
         h = RouterGraphQLHandler(build_app(), allow_mutation=False)
         assert "Mutation" not in h.get_sdl()
-        assert "create_items" not in h.get_sdl()
+        assert "create_item" not in h.get_sdl()
 
     async def test_introspection_works(self, handler):
         result = await handler.execute("{ __schema { queryType { name } } }")
@@ -66,48 +66,48 @@ class TestSDLAndIntrospection:
 
 class TestExecution:
     async def test_query_flat(self, handler):
-        result = await handler.execute("{ get_items { id name } }")
+        result = await handler.execute("{ list_items { id name } }")
         assert result == {
-            "data": {"get_items": [{"id": 0, "name": "i0"}, {"id": 1, "name": "i1"}]}
+            "data": {"list_items": [{"id": 0, "name": "i0"}, {"id": 1, "name": "i1"}]}
         }
 
     async def test_field_projection(self, handler):
-        result = await handler.execute("{ get_items { name } }")
-        assert result == {"data": {"get_items": [{"name": "i0"}, {"name": "i1"}]}}
+        result = await handler.execute("{ list_items { name } }")
+        assert result == {"data": {"list_items": [{"name": "i0"}, {"name": "i1"}]}}
 
     async def test_query_with_args(self, handler):
-        result = await handler.execute("{ get_items(limit: 1) { id } }")
-        assert result == {"data": {"get_items": [{"id": 0}]}}
+        result = await handler.execute("{ list_items(limit: 1) { id } }")
+        assert result == {"data": {"list_items": [{"id": 0}]}}
 
     async def test_path_params(self, handler):
-        result = await handler.execute("{ get_items_by_item_id(item_id: 5) { id name } }")
-        assert result == {"data": {"get_items_by_item_id": {"id": 5, "name": "single"}}}
+        result = await handler.execute("{ get_item(item_id: 5) { id name } }")
+        assert result == {"data": {"get_item": {"id": 5, "name": "single"}}}
 
     async def test_variables(self, handler):
         result = await handler.execute(
-            "query($id: Int!) { get_items_by_item_id(item_id: $id) { name } }",
+            "query($id: Int!) { get_item(item_id: $id) { name } }",
             variables={"id": 3},
         )
-        assert result == {"data": {"get_items_by_item_id": {"name": "single"}}}
+        assert result == {"data": {"get_item": {"name": "single"}}}
 
     async def test_variable_defaults(self, handler):
         result = await handler.execute(
-            "query($limit: Int = 1) { get_items(limit: $limit) { id } }"
+            "query($limit: Int = 1) { list_items(limit: $limit) { id } }"
         )
-        assert result == {"data": {"get_items": [{"id": 0}]}}
+        assert result == {"data": {"list_items": [{"id": 0}]}}
 
     async def test_alias_and_multiple_fields(self, handler):
         result = await handler.execute(
-            "{ a: get_items(limit: 1) { id } b: get_items_by_item_id(item_id: 7) { id } }"
+            "{ a: list_items(limit: 1) { id } b: get_item(item_id: 7) { id } }"
         )
         assert result["data"]["a"] == [{"id": 0}]
         assert result["data"]["b"] == {"id": 7}
 
     async def test_mutation_execution(self, handler):
         result = await handler.execute(
-            'mutation { create_items(payload: {name: "n"}) { id name } }'
+            'mutation { create_item(payload: {name: "n"}) { id name } }'
         )
-        assert result == {"data": {"create_items": {"id": 99, "name": "n"}}}
+        assert result == {"data": {"create_item": {"id": 99, "name": "n"}}}
 
     async def test_validation_error_format(self, handler):
         result = await handler.execute("{ nope }")
@@ -124,8 +124,8 @@ class TestExecution:
             raise HTTPException(status_code=404, detail="not found")
 
         handler = RouterGraphQLHandler(app)
-        result = await handler.execute("{ get_missing_by_item_id(item_id: 1) { id } }")
-        assert result["data"] == {"get_missing_by_item_id": None}
+        result = await handler.execute("{ missing(item_id: 1) { id } }")
+        assert result["data"] == {"missing": None}
         error = result["errors"][0]
         assert error["extensions"]["code"] == "HTTP_404"
         assert "404" in error["message"]
@@ -157,3 +157,35 @@ class TestConfigErrors:
         )
         with pytest.raises(DuplicateArgError, match="argument 'id'"):
             _arguments(route, TypeBuilder())
+
+
+class TestDuplicateEndpointNames:
+    def test_same_function_name_on_two_routes_fails_fast(self):
+        app = FastAPI()
+
+        @app.get("/a/{a_id}", response_model=ItemOut)
+        async def get_thing(a_id: int):
+            return ItemOut(id=a_id, name="a")
+
+        @app.get("/b/{b_id}", response_model=ItemOut)
+        async def get_thing(b_id: int):  # noqa: F811 — the collision under test
+            return ItemOut(id=b_id, name="b")
+
+        from routerql.naming import DuplicateFieldError
+
+        with pytest.raises(DuplicateFieldError, match="Rename one endpoint function"):
+            RouterGraphQLHandler(app)
+
+    def test_same_name_across_namespaces_is_fine(self):
+        app = FastAPI()
+
+        @app.get("/things/{thing_id}", response_model=ItemOut)
+        async def thing(thing_id: int):
+            return ItemOut(id=thing_id, name="q")
+
+        @app.post("/things", response_model=ItemOut)
+        async def thing(payload: ItemCreate):  # noqa: F811
+            return ItemOut(id=1, name=payload.name)
+
+        handler = RouterGraphQLHandler(app, allow_mutation=True)
+        assert "thing" in handler.get_sdl()
