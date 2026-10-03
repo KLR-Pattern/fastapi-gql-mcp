@@ -7,13 +7,23 @@ Four layers over the tag-derived domain tree:
 Discovery is scoped per domain (a route's tags form its domain paths, the
 ``"a:b"`` separator adds depth); execution always runs against the FULL schema,
 so agents may still combine fields across domains in one query.
+
+The schema itself mirrors the same hierarchy: fields live under their domain
+groups (``{ shop { catalog { list_products } } }``), so the fragment an agent
+reads matches the query it writes.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from graphql import GraphQLObjectType, GraphQLSchema, print_schema
+from graphql import (
+    GraphQLField,
+    GraphQLNonNull,
+    GraphQLObjectType,
+    GraphQLSchema,
+    print_schema,
+)
 
 from routerql.domains import DomainRegistry
 from routerql.mcp.errors import (
@@ -46,32 +56,72 @@ def _field_brief(name: str, field: Any) -> dict[str, Any]:
     }
 
 
+def _unwrap(obj: Any) -> Any:
+    return obj.of_type if isinstance(obj, GraphQLNonNull) else obj
+
+
+def _walk_group(root_type: Any, path: tuple[str, ...]) -> GraphQLObjectType | None:
+    """The group object type sitting at ``path`` under a root operation type."""
+    current: Any = root_type
+    for seg in path:
+        if current is None:
+            return None
+        field = current.fields.get(seg)
+        if field is None:
+            return None
+        current = _unwrap(field.type)
+    return current if isinstance(current, GraphQLObjectType) else None
+
+
 def _domain_sdl(
     schema: GraphQLSchema, registry: DomainRegistry, path: tuple[str, ...]
 ) -> str | None:
-    """SDL fragment containing the domain subtree's operations and types.
+    """SDL fragment for one domain subtree, addressed exactly as in queries.
 
-    Builds a filtered sub-schema from the selected root fields; graphql-core
-    then auto-collects only the reachable types, so shared types referenced by
-    the domain are included and everything else is left out.
+    Re-wraps the main schema's group object for ``path`` up the ancestor
+    chain, so the fragment shows the same route from the Query root
+    (``Query { shop { catalog { ... } } }``) while graphql-core auto-collects
+    only the reachable types.
     """
+    from routerql.schema_builder import group_type_name
+
     queries, mutations = registry.subtree_fields(path)
     if not queries and not mutations:
         return None
-    query_type = schema.query_type
-    if query_type is None or not queries:
+
+    def wrap(
+        root_type: Any, path: tuple[str, ...], *, mutation: bool
+    ) -> GraphQLObjectType | None:
+        group = _walk_group(root_type, path)
+        if group is None:
+            return None
+        # Rebuild the ancestor chain with sibling-free wrappers that keep the
+        # real group names, so the fragment's field addresses match the schema.
+        current: GraphQLObjectType = group
+        for depth in range(len(path) - 1, 0, -1):
+            ancestors = path[:depth]
+            child_seg = path[depth]
+            wrapper = GraphQLObjectType(
+                name=group_type_name(ancestors, mutation=mutation),
+                fields={child_seg: GraphQLField(GraphQLNonNull(current))},
+            )
+            current = wrapper
+        return current
+
+    sub_query_obj = wrap(schema.query_type, path, mutation=False)
+    if sub_query_obj is None:
         return None
     sub_query = GraphQLObjectType(
-        name=query_type.name,
-        fields={name: query_type.fields[name] for name in queries},
+        name="Query", fields={path[0]: GraphQLField(GraphQLNonNull(sub_query_obj))}
     )
     sub_mutation = None
     if mutations and schema.mutation_type is not None:
-        mutation_type = schema.mutation_type
-        sub_mutation = GraphQLObjectType(
-            name=mutation_type.name,
-            fields={name: mutation_type.fields[name] for name in mutations},
-        )
+        sub_mutation_obj = wrap(schema.mutation_type, path, mutation=True)
+        if sub_mutation_obj is not None:
+            sub_mutation = GraphQLObjectType(
+                name="Mutation",
+                fields={path[0]: GraphQLField(GraphQLNonNull(sub_mutation_obj))},
+            )
     return print_schema(GraphQLSchema(query=sub_query, mutation=sub_mutation))
 
 
@@ -111,6 +161,8 @@ def register_progressive_tools(
             hint="Call list_queries(domain) with one of these domain paths.",
         )
 
+    index = handler.query_fields
+
     @mcp.tool()
     def list_queries(domain: str) -> dict[str, Any]:
         """List the read (Query) operations of one domain.
@@ -127,14 +179,11 @@ def register_progressive_tools(
         path = _resolve(domain)
         if path is None:
             return _unknown_domain(domain, registry)
-        query_type = schema.query_type
-        if query_type is None:  # pragma: no cover - schema always has Query
-            return create_success_response({"domain": domain, "queries": []})
         names, _ = registry.subtree_fields(path)
         fields = [
-            _field_brief(name, query_type.fields[name])
+            _field_brief(name, index[name])
             for name in sorted(names)
-            if name in query_type.fields
+            if name in index
         ]
         return create_success_response(
             {"domain": domain, "queries": fields},
@@ -143,6 +192,8 @@ def register_progressive_tools(
         )
 
     if allow_mutation:
+
+        mutation_index = handler.mutation_fields
 
         @mcp.tool()
         def list_mutations(domain: str) -> dict[str, Any]:
@@ -158,14 +209,11 @@ def register_progressive_tools(
             path = _resolve(domain)
             if path is None:
                 return _unknown_domain(domain, registry)
-            mutation_type = schema.mutation_type
-            if mutation_type is None:
-                return create_success_response({"domain": domain, "mutations": []})
             _, names = registry.subtree_fields(path)
             fields = [
-                _field_brief(name, mutation_type.fields[name])
+                _field_brief(name, mutation_index[name])
                 for name in sorted(names)
-                if name in mutation_type.fields
+                if name in mutation_index
             ]
             return create_success_response({"domain": domain, "mutations": fields})
 

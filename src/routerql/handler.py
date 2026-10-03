@@ -41,7 +41,8 @@ class RouterGraphQLHandler:
             include_hidden=include_hidden,
             mutation_include=mutation_include,
         ).scan(self._types)
-        self._schema = SchemaBuilder(routes, self._invoker, self._types).build()
+        self._builder = SchemaBuilder(routes, self._invoker, self._types)
+        self._schema = self._builder.build()
         self._routes: list[RouteInfo] = routes
 
     @property
@@ -55,6 +56,15 @@ class RouterGraphQLHandler:
     @property
     def invoker(self) -> RouteInvoker:
         return self._invoker
+
+    @property
+    def query_fields(self) -> dict[str, Any]:
+        """Flat field-name -> GraphQLField index (grouped schema's leaves)."""
+        return self._builder.query_fields
+
+    @property
+    def mutation_fields(self) -> dict[str, Any]:
+        return self._builder.mutation_fields
 
     def get_sdl(self) -> str:
         """Full schema in SDL form (the MCP ``get_schema`` payload)."""

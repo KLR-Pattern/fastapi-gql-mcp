@@ -26,6 +26,11 @@ P2/P3 feature wave over the 0.1 core.
 
 ### Changed
 
+- **Domain-grouped schema (UseCaseService-style hierarchy)**: fields live
+  under their tag domain tree — a route tagged `shop:catalog` answers at
+  `{ shop { catalog { list_products } } }`. Untagged routes join the domain of
+  their first path segment. Domain SDL fragments now show the exact grouped
+  address an agent should query.
 - **GraphQL field names now come from the endpoint function name** (e.g.
   `async def get_user` → `get_user`) instead of being reconstructed from the
   URL path + verb. Path/query/body parameters still become the field's

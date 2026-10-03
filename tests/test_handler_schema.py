@@ -29,7 +29,7 @@ def build_app() -> FastAPI:
     async def get_item(item_id: int):
         return ItemOut(id=item_id, name="single")
 
-    @app.post("/items", response_model=ItemOut)
+    @app.post("/items", response_model=ItemOut, tags=["items"])
     async def create_item(payload: ItemCreate):
         return ItemOut(id=99, name=payload.name)
 
@@ -47,9 +47,11 @@ class TestSDLAndIntrospection:
     def test_sdl_contains_types_and_fields(self, handler):
         sdl = handler.get_sdl()
         assert "type Query {" in sdl
+        assert "shop: ShopQuery!" in sdl
         assert "list_items(limit: Int = 2): [ItemOut!]" in sdl
         assert "get_item(item_id: Int!): ItemOut" in sdl
         assert "type Mutation {" in sdl
+        assert "items: ItemsMutation!" in sdl
         assert "create_item(payload: ItemCreateInput!): ItemOut" in sdl
         assert "type ItemOut {" in sdl
         assert "input ItemCreateInput {" in sdl
@@ -66,48 +68,48 @@ class TestSDLAndIntrospection:
 
 class TestExecution:
     async def test_query_flat(self, handler):
-        result = await handler.execute("{ list_items { id name } }")
+        result = await handler.execute("{ shop { list_items { id name } } }")
         assert result == {
-            "data": {"list_items": [{"id": 0, "name": "i0"}, {"id": 1, "name": "i1"}]}
+            "data": {"shop": {"list_items": [{"id": 0, "name": "i0"}, {"id": 1, "name": "i1"}]}}
         }
 
     async def test_field_projection(self, handler):
-        result = await handler.execute("{ list_items { name } }")
-        assert result == {"data": {"list_items": [{"name": "i0"}, {"name": "i1"}]}}
+        result = await handler.execute("{ shop { list_items { name } } }")
+        assert result == {"data": {"shop": {"list_items": [{"name": "i0"}, {"name": "i1"}]}}}
 
     async def test_query_with_args(self, handler):
-        result = await handler.execute("{ list_items(limit: 1) { id } }")
-        assert result == {"data": {"list_items": [{"id": 0}]}}
+        result = await handler.execute("{ shop { list_items(limit: 1) { id } } }")
+        assert result == {"data": {"shop": {"list_items": [{"id": 0}]}}}
 
     async def test_path_params(self, handler):
-        result = await handler.execute("{ get_item(item_id: 5) { id name } }")
-        assert result == {"data": {"get_item": {"id": 5, "name": "single"}}}
+        result = await handler.execute("{ shop { get_item(item_id: 5) { id name } } }")
+        assert result == {"data": {"shop": {"get_item": {"id": 5, "name": "single"}}}}
 
     async def test_variables(self, handler):
         result = await handler.execute(
-            "query($id: Int!) { get_item(item_id: $id) { name } }",
+            "query($id: Int!) { shop { get_item(item_id: $id) { name } } }",
             variables={"id": 3},
         )
-        assert result == {"data": {"get_item": {"name": "single"}}}
+        assert result == {"data": {"shop": {"get_item": {"name": "single"}}}}
 
     async def test_variable_defaults(self, handler):
         result = await handler.execute(
-            "query($limit: Int = 1) { list_items(limit: $limit) { id } }"
+            "query($limit: Int = 1) { shop { list_items(limit: $limit) { id } } }"
         )
-        assert result == {"data": {"list_items": [{"id": 0}]}}
+        assert result == {"data": {"shop": {"list_items": [{"id": 0}]}}}
 
     async def test_alias_and_multiple_fields(self, handler):
         result = await handler.execute(
-            "{ a: list_items(limit: 1) { id } b: get_item(item_id: 7) { id } }"
+            "{ shop { a: list_items(limit: 1) { id } b: get_item(item_id: 7) { id } } }"
         )
-        assert result["data"]["a"] == [{"id": 0}]
-        assert result["data"]["b"] == {"id": 7}
+        assert result["data"]["shop"]["a"] == [{"id": 0}]
+        assert result["data"]["shop"]["b"] == {"id": 7}
 
     async def test_mutation_execution(self, handler):
         result = await handler.execute(
-            'mutation { create_item(payload: {name: "n"}) { id name } }'
+            'mutation { items { create_item(payload: {name: "n"}) { id name } } }'
         )
-        assert result == {"data": {"create_item": {"id": 99, "name": "n"}}}
+        assert result == {"data": {"items": {"create_item": {"id": 99, "name": "n"}}}}
 
     async def test_validation_error_format(self, handler):
         result = await handler.execute("{ nope }")
@@ -119,13 +121,13 @@ class TestExecution:
 
         app = FastAPI()
 
-        @app.get("/missing/{item_id}", response_model=ItemOut)
+        @app.get("/missing/{item_id}", response_model=ItemOut, tags=["misc"])
         async def missing(item_id: int):
             raise HTTPException(status_code=404, detail="not found")
 
         handler = RouterGraphQLHandler(app)
-        result = await handler.execute("{ missing(item_id: 1) { id } }")
-        assert result["data"] == {"missing": None}
+        result = await handler.execute("{ misc { missing(item_id: 1) { id } } }")
+        assert result["data"] == {"misc": {"missing": None}}
         error = result["errors"][0]
         assert error["extensions"]["code"] == "HTTP_404"
         assert "404" in error["message"]

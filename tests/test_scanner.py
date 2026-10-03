@@ -255,7 +255,7 @@ class TestQueryParameterModels:
 
         app = FastAPI()
 
-        @app.get("/filtered", response_model=ItemOut)
+        @app.get("/filtered", response_model=ItemOut, tags=["demo"])
         async def filtered(filters: Annotated[ItemFilter, Query()]):
             return ItemOut(id=1, name="x")
 
@@ -282,7 +282,7 @@ class TestQueryParameterModels:
         app = FastAPI()
         seen: dict = {}
 
-        @app.get("/things", response_model=list[ItemOut])
+        @app.get("/things", response_model=list[ItemOut], tags=["demo"])
         async def things(filters: Annotated[ItemFilter, Query()]):
             seen.update(filters.model_dump())
             return [ItemOut(id=i, name=filters.category) for i in range(filters.limit)]
@@ -291,9 +291,9 @@ class TestQueryParameterModels:
         sdl = handler.get_sdl()
         assert "things(category: String!, limit: Int = 2): [ItemOut!]" in sdl
         result = await handler.execute(
-            "{ things(category: \"tools\") { name } }"
+            "{ demo { things(category: \"tools\") { name } } }"
         )
-        assert result == {"data": {"things": [{"name": "tools"}, {"name": "tools"}]}}
+        assert result == {"data": {"demo": {"things": [{"name": "tools"}, {"name": "tools"}]}}}
         assert seen == {"category": "tools", "limit": 2}
         await handler.aclose()
 

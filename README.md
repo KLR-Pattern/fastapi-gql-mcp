@@ -51,11 +51,16 @@ FastAPI app ──① RouterScanner introspects app.routes ──▶ GraphQLSche
 
 | Endpoint | GraphQL field |
 |---|---|
-| `async def list_items` on `GET /items` | `list_items(limit: Int = 10): [ItemOut!]` |
-| `async def get_item` on `GET /items/{item_id}` | `get_item(item_id: Int!): ItemOut` |
-| `async def create_item` on `POST /items` | `create_item(payload: ItemCreateInput!): ItemOut` |
+| `async def list_items` on `GET /items` (tag `shop:catalog`) | `shop.catalog.list_items` |
+| `async def get_item` on `GET /items/{item_id}` (tag `shop:catalog`) | `shop.catalog.get_item(item_id: Int!): ItemOut` |
+| `async def create_item` on `POST /items` (tag `shop:catalog`) | `shop.catalog.create_item(payload: ItemCreateInput!): ItemOut` |
 
-**Field names are the endpoint function names** — the developer's own
+**Fields are grouped by the tag-derived domain tree** (UseCaseService-style
+hierarchy): a route tagged `shop:catalog` answers at
+`{ shop { catalog { list_products { name } } } }`. Untagged routes fall into
+the domain of their first path segment, so every field has a group.
+
+**Leaf field names are the endpoint function names** — the developer's own
 vocabulary, no URL reconstruction. Function names are unique only per module,
 so two routes sharing a name fail fast with a `DuplicateFieldError` (rename
 one function or exclude one route).
@@ -125,7 +130,7 @@ from routerql import RouterGraphQLHandler
 handler = RouterGraphQLHandler(app)
 print(handler.get_sdl())
 result = await handler.execute(
-    "query($id: Int!) { get_user(user_id: $id) { name } }",
+    "query($id: Int!) { iam { get_user(user_id: $id) { name } } }",
     variables={"id": 1},
 )
 ```

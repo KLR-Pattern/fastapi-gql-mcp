@@ -54,16 +54,17 @@ async def main() -> None:
             "graphql_query",
             {
                 "query": (
-                    "{ in_stock: list_products(in_stock: true) { name price_cents }"
-                    " orders: list_orders { status quantity }"
-                    " stats: shop_stats { revenue_cents } }"
+                    "{ shop { catalog { list_products(in_stock: true)"
+                    " { name price_cents } }"
+                    " orders { list_orders { status quantity } } }"
+                    " analytics { shop_stats { revenue_cents } } }"
                 )
             },
         )
         show("L4  graphql_query — one query, three domains composed", result["data"])
         result = await tool(
             "graphql_query",
-            {"query": "{ get_order(order_id: 999) { id } }"},
+            {"query": "{ shop { orders { get_order(order_id: 999) { id } } } }"},
         )
         show("error shape — 404 nulls only its field", result["data"])
         result = await tool(
@@ -71,7 +72,8 @@ async def main() -> None:
             {
                 "mutation": (
                     'mutation($p: OrderCreateInput!)'
-                    " { create_order(payload: $p) { id status quantity } }"
+                    " { shop { orders { create_order(payload: $p)"
+                    " { id status quantity } } } }"
                 ),
                 "variables": {"p": {"product_id": 4, "quantity": 3}},
             },

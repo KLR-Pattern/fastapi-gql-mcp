@@ -89,12 +89,12 @@ class TestGraphqlQuery:
             result = payload(
                 await client.call_tool(
                     "graphql_query",
-                    {"query": "{ list_users { id name } }"},
+                    {"query": "{ iam { list_users { id name } } }"},
                 )
             )
         assert result["success"] is True
         data = result["data"]["data"]
-        assert data["list_users"][0]["name"] == "alice"
+        assert data["iam"]["list_users"][0]["name"] == "alice"
 
     async def test_query_variables(self, authed_mcp):
         async with Client(authed_mcp.mcp) as client:
@@ -102,13 +102,13 @@ class TestGraphqlQuery:
                 await client.call_tool(
                     "graphql_query",
                     {
-                        "query": "query($id: Int!) { get_user(user_id: $id)"
-                        " { name email } }",
+                        "query": "query($id: Int!) { iam { get_user(user_id: $id)"
+                        " { name email } } }",
                         "variables": {"id": 1},
                     },
                 )
             )
-        assert result["data"]["data"]["get_user"] == {
+        assert result["data"]["data"]["iam"]["get_user"] == {
             "name": "alice",
             "email": "a@x.io",
         }
@@ -119,14 +119,14 @@ class TestGraphqlQuery:
                 await client.call_tool(
                     "graphql_query",
                     {
-                        "query": "{ a: list_users(active: false) { id } "
-                        "b: get_user(user_id: 2) { name } }"
+                        "query": "{ iam { a: list_users(active: false) { id } "
+                        "b: get_user(user_id: 2) { name } } }"
                     },
                 )
             )
         data = result["data"]["data"]
-        assert data["a"] == []
-        assert data["b"] == {"name": "bob"}
+        assert data["iam"]["a"] == []
+        assert data["iam"]["b"] == {"name": "bob"}
 
     async def test_partial_failure_keeps_siblings(self, authed_mcp):
         async with Client(authed_mcp.mcp) as client:
@@ -134,23 +134,23 @@ class TestGraphqlQuery:
                 await client.call_tool(
                     "graphql_query",
                     {
-                        "query": "{ ok: get_user(user_id: 1) { name } "
-                        "missing: get_user(user_id: 99) { name } }"
+                        "query": "{ iam { ok: get_user(user_id: 1) { name } "
+                        "missing: get_user(user_id: 99) { name } } }"
                     },
                 )
             )
         data = result["data"]["data"]
-        assert data["ok"] == {"name": "alice"}
-        assert data["missing"] is None
+        assert data["iam"]["ok"] == {"name": "alice"}
+        assert data["iam"]["missing"] is None
         assert result["data"]["errors"][0]["extensions"]["code"] == "HTTP_404"
 
     async def test_without_credentials_401(self, mcp):
         async with Client(mcp.mcp) as client:
             result = payload(
-                await client.call_tool("graphql_query", {"query": "{ list_users { id } }"})
+                await client.call_tool("graphql_query", {"query": "{ iam { list_users { id } } }"})
             )
         # The field failed (401) but the query itself was valid.
-        assert result["data"]["data"]["list_users"] is None
+        assert result["data"]["data"]["iam"]["list_users"] is None
         assert result["data"]["errors"][0]["extensions"]["code"] == "HTTP_401"
 
     async def test_invalid_query_error_envelope(self, authed_mcp):
@@ -168,7 +168,7 @@ class TestGraphqlQuery:
             result = payload(
                 await client.call_tool(
                     "graphql_query",
-                    {"query": 'mutation { create_user(payload: {name: "x"}) { id } }'},
+                    {"query": 'mutation { iam { create_user(payload: {name: "x"}) { id } } }'},
                 )
             )
         assert result["success"] is False
@@ -182,12 +182,12 @@ class TestMutationTool:
                     "graphql_mutation",
                     {
                         "mutation": 'mutation($p: UserCreateInput!) '
-                        '{ create_user(payload: $p) { id name } }',
+                        '{ iam { create_user(payload: $p) { id name } } }',
                         "variables": {"p": {"name": "carol"}},
                     },
                 )
             )
-        assert result["data"]["data"]["create_user"]["name"] == "carol"
+        assert result["data"]["data"]["iam"]["create_user"]["name"] == "carol"
 
     async def test_no_mutation_tool_when_disabled(self):
         mcp = RouterMCP(build_app(), name="ro")

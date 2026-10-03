@@ -17,7 +17,7 @@ class Out(BaseModel):
 def build_app() -> FastAPI:
     app = FastAPI()
 
-    @app.get("/things", response_model=list[Out])
+    @app.get("/things", response_model=list[Out], tags=["demo"])
     async def things():
         return [Out(id=1, name="a")]
 
@@ -51,9 +51,9 @@ class TestGraphiQLPage:
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
                 html = await c.get("/play")
-                result = await c.post("/gql", json={"query": "{ things { id } }"})
+                result = await c.post("/gql", json={"query": "{ demo { things { id } } }"})
         assert "url: '/gql'" in html.text
-        assert result.json() == {"data": {"things": [{"id": 1}]}}
+        assert result.json() == {"data": {"demo": {"things": [{"id": 1}]}}}
 
 
 class TestGraphqlHttp:
@@ -63,16 +63,16 @@ class TestGraphqlHttp:
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
                 response = await c.post(
-                    "/graphql", json={"query": "{ things { id name } }"}
+                    "/graphql", json={"query": "{ demo { things { id name } } }"}
                 )
         assert response.status_code == 200
-        assert response.json() == {"data": {"things": [{"id": 1, "name": "a"}]}}
+        assert response.json() == {"data": {"demo": {"things": [{"id": 1, "name": "a"}]}}}
 
     async def test_post_with_variables(self, mounted):
         app, _ = mounted
         new = FastAPI()
 
-        @new.get("/items/{item_id}", response_model=Out)
+        @new.get("/items/{item_id}", response_model=Out, tags=["demo"])
         async def item(item_id: int):
             return Out(id=item_id, name="x")
 
@@ -84,12 +84,12 @@ class TestGraphqlHttp:
                 response = await c.post(
                     "/graphql",
                     json={
-                        "query": "query($id: Int!) { item(item_id: $id)"
-                        " { name } }",
+                        "query": "query($id: Int!) { demo { item(item_id: $id)"
+                        " { name } } }",
                         "variables": {"id": 7},
                     },
                 )
-        assert response.json() == {"data": {"item": {"name": "x"}}}
+        assert response.json() == {"data": {"demo": {"item": {"name": "x"}}}}
 
     async def test_validation_error_is_400(self, mounted):
         app, _ = mounted
