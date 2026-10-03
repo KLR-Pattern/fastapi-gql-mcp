@@ -47,30 +47,51 @@ field-level selection and cross-endpoint composition for free.
 
 ## How it works
 
+No decorators, no model changes — everything is derived from the app you
+already have, in three steps:
+
+1. **Scan** — `RouterScanner` reads `app.routes`: verb, path, params,
+   `response_model`, tags, docstrings.
+2. **Build** — a graphql-core schema is assembled: tags become domain groups,
+   endpoint function names become field names, Pydantic models become GraphQL
+   types, and your documentation becomes schema descriptions.
+3. **Execute** — each field's resolver calls its route in-process through the
+   real ASGI app, so `Depends`, middleware and auth behave exactly as over
+   HTTP. Sibling fields resolve concurrently; a failing route nulls only its
+   own field.
+
+One route, end to end:
+
+```python
+# your code — unchanged
+@app.get("/products", response_model=list[ProductOut], tags=["shop:catalog"])
+async def list_products(filters: Annotated[ProductFilter, Query()]) -> list[ProductOut]:
+    """Browse the product catalog."""
 ```
-FastAPI app ──① RouterScanner introspects app.routes ──▶ GraphQLSchema (graphql-core)
-                   GET → Query leaf; POST/PUT/PATCH/DELETE → Mutation leaf
-                   route tags → domain groups; params → args; response_model → type
-              ◀──② RouteInvoker (httpx ASGITransport + asgi-lifespan)
-              Agent via MCP: discovery tools + graphql_query(/graphql_mutation)
+
+```graphql
+# the schema the agent discovers (excerpt)
+type Query { shop: ShopQuery! }
+type ShopQuery { catalog: ShopCatalogQuery! }
+type ShopCatalogQuery {
+  list_products(category: String, in_stock: Boolean, limit: Int = 10): [ProductOut!]
+}
+
+# what the agent asks — field-level selection, routes combined in one query
+{
+  shop     { catalog { list_products(in_stock: true) { name } } }
+  analytics { shop_stats { revenue_cents } }
+}
 ```
 
-| Endpoint | GraphQL field |
-|---|---|
-| `async def list_items` on `GET /items` (tag `shop:catalog`) | `shop.catalog.list_items` |
-| `async def get_item` on `GET /items/{item_id}` (tag `shop:catalog`) | `shop.catalog.get_item(item_id: Int!): ItemOut` |
-| `async def create_item` on `POST /items` (tag `shop:catalog`) | `shop.catalog.create_item(payload: ItemCreateInput!): ItemOut` |
+The shape follows two rules:
 
-Two rules define the shape:
-
-- **Fields are grouped by the tag-derived domain tree** (UseCaseService-style
-  hierarchy): a route tagged `shop:catalog` answers at
-  `{ shop { catalog { list_products { name } } } }`. Untagged routes fall into
-  the domain of their first path segment, so every field has a group.
-- **Leaf field names are the endpoint function names** — the developer's own
-  vocabulary, no URL reconstruction. Function names are unique only per module,
-  so two routes sharing a name fail fast with a `DuplicateFieldError` (rename
-  one function or exclude one route).
+- **Tags group the tree** — `tags=["shop:catalog"]` answers at
+  `{ shop { catalog { … } } }`. Untagged routes join the domain of their first
+  path segment, so every field has a group.
+- **Function names name the leaves** — `async def list_products` becomes
+  `list_products`, your own vocabulary with no URL reconstruction. Two routes
+  sharing a function name fail fast with `DuplicateFieldError`.
 
 Rules worth knowing:
 
