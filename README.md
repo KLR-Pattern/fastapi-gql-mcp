@@ -154,10 +154,17 @@ to what the agent should be allowed to do (e.g. read-only), and combine with
 
 ## Demo
 
+The `demo/` directory runs a small shop app (users / catalog / orders / stats,
+auth via `x-token: demo-secret`) with every feature in play:
+
 ```bash
-uv run --extra mcp python -m demo.run_mcp                          # stdio MCP
-uv run --extra mcp uvicorn demo.run_http:app --port 8010           # HTTP + /mcp/ + /graphiql
+uv run --extra mcp python -m demo               # REST + /mcp/ + /graphiql + /graphql on :8010
+uv run --extra mcp python -m demo.mcp_stdio     # stdio MCP server (Claude Desktop etc.)
+uv run --extra mcp python -m demo.mcp_walkthrough  # agent's-eye MCP walkthrough, no client needed
 ```
+
+`python -m demo` prints all endpoint URLs; `/now` is untyped on purpose so the
+skip warning is visible at startup.
 
 ## Development
 

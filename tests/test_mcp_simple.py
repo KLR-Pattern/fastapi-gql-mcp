@@ -235,7 +235,7 @@ class TestMountTo:
         import httpx
         from asgi_lifespan import LifespanManager
 
-        from demo.demo_app import create_app
+        from demo.app import create_app
 
         demo_app = create_app()
         mcp = RouterMCP(demo_app, name="mounted", include=["/products*"])
@@ -269,7 +269,7 @@ class TestMountTo:
         import httpx
         from asgi_lifespan import LifespanManager
 
-        from demo.demo_app import create_app
+        from demo.app import create_app
 
         demo_app = create_app()
         mcp = RouterMCP(demo_app, name="mounted2", include=["/products*"])

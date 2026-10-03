@@ -20,6 +20,9 @@ P2/P3 feature wave over the 0.1 core.
   accepting `{query, variables, operationName}`.
 - **`mutation_include`** glob whitelist: with `allow_mutation=True`, write
   routes must match to become mutations.
+- Restructured `demo/` nexusx-style: `python -m demo` (all-in-one server),
+  `demo.mcp_stdio`, `demo.mcp_walkthrough` (in-memory agent walkthrough);
+  richer demo app (query parameter models, tag domains, skip examples).
 
 ### Changed
 
