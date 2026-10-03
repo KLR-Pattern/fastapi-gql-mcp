@@ -6,6 +6,9 @@ Feature coverage on purpose:
 - Query Parameter Model (``Annotated[ProductFilter, Query()]``)
 - auth via ``x-token`` header (orders + writes need ``demo-secret``)
 - collection/item route pairs with distinct endpoint function names
+- **descriptions everywhere** — model docstrings, ``Field(description=...)``,
+  endpoint docstrings, ``Query()/Path()/Body(description=...)`` all flow into
+  the GraphQL schema (hover in GraphiQL to see them)
 - one untyped route (``/now``) to demonstrate the skip warning
 - lifespan startup log (proves lifespan wiring)
 """
@@ -16,7 +19,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
 DEMO_TOKEN = "demo-secret"
@@ -26,64 +29,84 @@ DEMO_TOKEN = "demo-secret"
 
 
 class UserOut(BaseModel):
-    id: int
-    name: str
-    email: str
-    role: Literal["admin", "member"] = "member"
+    """An account holder of the shop."""
+
+    id: int = Field(description="stable user identifier")
+    name: str = Field(description="display name")
+    email: str = Field(description="contact address")
+    role: Literal["admin", "member"] = Field(
+        default="member", description="permission group"
+    )
 
 
 class UserCreate(BaseModel):
-    name: str
-    email: str
-    role: Literal["admin", "member"] = "member"
+    """Payload for registering a user."""
+
+    name: str = Field(description="display name")
+    email: str = Field(description="contact address")
+    role: Literal["admin", "member"] = Field(
+        default="member", description="permission group"
+    )
 
 
 class UserFilter(BaseModel):
-    """Query Parameter Model — routerql flattens this into query arguments."""
+    """Filters for browsing users (Query Parameter Model)."""
 
-    role: Literal["admin", "member"] | None = None
-    limit: int = Field(default=10, ge=1, le=100)
+    role: Literal["admin", "member"] | None = Field(
+        default=None, description="only users with this role"
+    )
+    limit: int = Field(default=10, ge=1, le=100, description="max users returned")
 
 
 class ProductOut(BaseModel):
     """A catalog product as exposed to customers."""
 
-    id: int
-    name: str
-    category: str
-    price_cents: int
+    id: int = Field(description="stable product identifier")
+    name: str = Field(description="human-readable product name")
+    category: str = Field(description="merchandising category, e.g. coffee")
+    price_cents: int = Field(description="unit price in minor currency units")
     in_stock: bool = Field(description="available for purchase right now")
 
 
 class ProductCreate(BaseModel):
-    name: str
-    category: str
-    price_cents: int
+    """Payload for adding a product to the catalog."""
+
+    name: str = Field(description="human-readable product name")
+    category: str = Field(description="merchandising category, e.g. coffee")
+    price_cents: int = Field(description="unit price in minor currency units")
 
 
 class ProductFilter(BaseModel):
-    category: str | None = None
-    in_stock: bool | None = None
-    limit: int = Field(default=10, ge=1, le=100)
+    """Filters for browsing the catalog (Query Parameter Model)."""
+
+    category: str | None = Field(default=None, description="exact category match")
+    in_stock: bool | None = Field(default=None, description="stock availability")
+    limit: int = Field(default=10, ge=1, le=100, description="max products returned")
 
 
 class OrderOut(BaseModel):
-    id: int
-    user_id: int
-    product_id: int
-    quantity: int
-    status: str
+    """A purchase order connecting a user to a product."""
+
+    id: int = Field(description="stable order identifier")
+    user_id: int = Field(description="the buying user")
+    product_id: int = Field(description="the purchased product")
+    quantity: int = Field(description="units purchased")
+    status: str = Field(description="lifecycle state: created / paid / shipped")
 
 
 class OrderCreate(BaseModel):
-    product_id: int
-    quantity: int = 1
+    """Payload for placing an order."""
+
+    product_id: int = Field(description="product to purchase")
+    quantity: int = Field(default=1, ge=1, description="units to purchase")
 
 
 class ShopStats(BaseModel):
-    total_orders: int
-    revenue_cents: int
-    products_in_stock: int
+    """Aggregated shop health metrics."""
+
+    total_orders: int = Field(description="orders placed, all statuses")
+    revenue_cents: int = Field(description="sum of quantity * unit price")
+    products_in_stock: int = Field(description="products currently purchasable")
 
 
 # ------------------------------------------------------------------------ auth
@@ -139,21 +162,37 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------ users
 
     @app.get("/users", response_model=list[UserOut], tags=["iam:users"])
-    async def list_users(filters: Annotated[UserFilter, Query()]) -> list[UserOut]:
+    async def list_users(
+        filters: Annotated[UserFilter, Query(description="how to narrow the user list")],
+    ) -> list[UserOut]:
+        """Browse shop users.
+
+        Newest users first is NOT guaranteed; use ``role`` + ``limit`` to narrow.
+        """
         users = app.state.users.values()
         if filters.role is not None:
             users = (u for u in users if u["role"] == filters.role)
         return [UserOut.model_validate(u) for u in list(users)[: filters.limit]]
 
     @app.get("/users/{user_id}", response_model=UserOut, tags=["iam:users"])
-    async def get_user(user_id: int) -> UserOut:
+    async def get_user(
+        user_id: Annotated[int, Path(description="the user to fetch")],
+    ) -> UserOut:
+        """Fetch a single user by id.
+
+        Returns 404-shaped field errors for unknown ids.
+        """
         user = app.state.users.get(user_id)
         if user is None:
             raise HTTPException(status_code=404, detail="user not found")
         return UserOut.model_validate(user)
 
     @app.post("/users", response_model=UserOut, tags=["iam:users"])
-    async def create_user(payload: UserCreate, _token: str = Depends(verify_token)) -> UserOut:
+    async def create_user(
+        payload: Annotated[UserCreate, Body(description="the account to register")],
+        _token: str = Depends(verify_token),
+    ) -> UserOut:
+        """Register a user (requires x-token)."""
         user = {"id": _next(app), **payload.model_dump()}
         app.state.users[user["id"]] = user
         return UserOut.model_validate(user)
@@ -176,7 +215,10 @@ def create_app() -> FastAPI:
         return [ProductOut.model_validate(p) for p in list(products)[: filters.limit]]
 
     @app.get("/products/{product_id}", response_model=ProductOut, tags=["shop:catalog"])
-    async def get_product(product_id: int) -> ProductOut:
+    async def get_product(
+        product_id: Annotated[int, Path(description="the product to fetch")],
+    ) -> ProductOut:
+        """Fetch a single product by id."""
         product = app.state.products.get(product_id)
         if product is None:
             raise HTTPException(status_code=404, detail="product not found")
@@ -184,8 +226,13 @@ def create_app() -> FastAPI:
 
     @app.post("/products", response_model=ProductOut, tags=["shop:catalog"])
     async def create_product(
-        payload: ProductCreate, _token: str = Depends(verify_token)
+        payload: Annotated[ProductCreate, Body(description="the product to add")],
+        _token: str = Depends(verify_token),
     ) -> ProductOut:
+        """Add a product to the catalog (requires x-token).
+
+        New products start in stock.
+        """
         product = {"id": _next(app), "in_stock": True, **payload.model_dump()}
         app.state.products[product["id"]] = product
         return ProductOut.model_validate(product)
@@ -206,7 +253,11 @@ def create_app() -> FastAPI:
         return [OrderOut.model_validate(o) for o in orders]
 
     @app.get("/orders/{order_id}", response_model=OrderOut, tags=["shop:orders"])
-    async def get_order(order_id: int, _token: str = Depends(verify_token)) -> OrderOut:
+    async def get_order(
+        order_id: Annotated[int, Path(description="the order to fetch")],
+        _token: str = Depends(verify_token),
+    ) -> OrderOut:
+        """Fetch a single order by id (requires x-token)."""
         order = app.state.orders.get(order_id)
         if order is None:
             raise HTTPException(status_code=404, detail="order not found")
@@ -214,8 +265,13 @@ def create_app() -> FastAPI:
 
     @app.post("/orders", response_model=OrderOut, tags=["shop:orders"])
     async def create_order(
-        payload: OrderCreate, _token: str = Depends(verify_token)
+        payload: Annotated[OrderCreate, Body(description="the order to place")],
+        _token: str = Depends(verify_token),
     ) -> OrderOut:
+        """Place an order (requires x-token).
+
+        Rejects unknown products (400) and out-of-stock ones (409).
+        """
         product = app.state.products.get(payload.product_id)
         if product is None:
             raise HTTPException(status_code=400, detail="unknown product")
@@ -229,6 +285,7 @@ def create_app() -> FastAPI:
 
     @app.get("/stats", response_model=ShopStats, tags=["analytics"])
     async def shop_stats() -> ShopStats:
+        """Shop health metrics, computed live over orders and stock."""
         orders = list(app.state.orders.values())
         prices = app.state.products
         return ShopStats(
