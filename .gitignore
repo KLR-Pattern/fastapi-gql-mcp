@@ -7,3 +7,8 @@ __pycache__/
 dist/
 .DS_Store
 .claude/
+
+# consumer example: local env + resolved lock stay untracked
+examples/*/.env
+examples/*/uv.lock
+examples/*/.venv/

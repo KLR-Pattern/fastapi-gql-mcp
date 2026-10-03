@@ -221,6 +221,13 @@ uv run --extra mcp python -m demo.mcp_walkthrough  # agent's-eye MCP walkthrough
 `python -m demo` prints all endpoint URLs and serves the grouped schema;
 `/now` is untyped on purpose so the skip warning is visible at startup.
 
+For the full consumer experience — a real app with **GitHub OAuth login,
+session cookies, and MCP OAuth (Claude Code's browser login flow)** — see
+[`examples/notes_oauth`](./examples/notes_oauth/): three interchangeable
+credential carriers resolved in one place, the MCP endpoint protected by
+an OAuth 2.1 proxy, and a smoke script that walks the protected paths
+headlessly.
+
 ## Development
 
 ```bash

@@ -4,7 +4,6 @@
 
 ### Added
 
-
 - **`RouterMCP(auth=...)`**: optional fastmcp auth provider (e.g.
   `GitHubProvider`) passed through to `FastMCP` untouched — the MCP
   endpoint then speaks OAuth 2.1 (401 discovery, DCR, PKCE) and clients'
@@ -21,6 +20,13 @@
   plain `Mount("")` catch-all would silently shadow host routes added
   later, and dropping the app-level middleware (auth verification,
   request-context capture) silently 401s every request.
+
+- **Consumer example `examples/notes_oauth`**: a full Notes app behind
+  GitHub OAuth — browser session cookie, `POST /auth/token` Bearer, and
+  MCP OAuth 2.1 login (Claude Code) as three interchangeable credential
+  carriers, with the fastmcp GitHub proxy reusing the app's OAuth callback
+  via a redirect subdirectory (`auth_at_root`). Guarded by
+  `tests/test_example_public_api.py`: examples import the public API only.
 
 ### Changed
 
