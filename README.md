@@ -34,20 +34,16 @@ agents get:
 
 ### Compared to the alternatives
 
-Two families of prior art: **REST-endpoint bridges** (one tool per endpoint,
-no composition) and **GraphQL bridges** (composition, but they require an
-existing GraphQL API). routerql is the overlap neither family covers: a
-GraphQL contract derived from plain FastAPI routes, with zero setup.
+The other FastAPI→MCP bridges map endpoints to tools one-to-one. routerql
+instead derives a GraphQL schema from your routes — GraphQL is the
+implementation vehicle, the contract the agent sees: few constant tools,
+field-level selection and cross-endpoint composition for free.
 
-| Project | Input | Tool count | Field selection | Composition | Setup |
-|---|---|---|---|---|---|
-| [fastapi-mcp](https://github.com/tadata-org/fastapi_mcp) (Tadata) | FastAPI app | one per endpoint | ✗ | ✗ | none |
-| [FastMCP.from_openapi](https://gofastmcp.com/servers/openapi) | OpenAPI / FastAPI | one per endpoint | ✗ | ✗ | none |
-| [Apollo MCP Server](https://github.com/apollographql/apollo-mcp-server) | GraphQL operations | one per operation | ✓ | ✓ | needs GraphQL server + per-op config |
-| [mcp-graphql](https://pypi.org/project/mcp-graphql/) | GraphQL API | introspect + query | ✓ | ✓ | needs GraphQL server |
-| [Mcp4gql](https://mcpmarket.com/mcp/mcp4gql) | GraphQL API | introspect + query | ✓ | ✓ | needs GraphQL server |
-| [GraphQL MCP Forge](https://mcp.so) | GraphQL schema | one per operation (generated) | ✓ | ✓ | needs GraphQL server |
-| **routerql** | FastAPI app | 2-6, constant | ✓ | ✓ | none |
+| Project | Tool count | Field selection | Composition | Setup |
+|---|---|---|---|---|
+| [fastapi-mcp](https://github.com/tadata-org/fastapi_mcp) (Tadata) | one per endpoint | ✗ | ✗ | none |
+| [FastMCP.from_openapi](https://gofastmcp.com/servers/openapi) | one per endpoint | ✗ | ✗ | none |
+| **routerql** | 2-6, constant | ✓ | ✓ | none |
 
 ## How it works
 
