@@ -124,6 +124,7 @@ class TestGraphqlHttp:
 
 class TestCredentialForwarding:
     async def test_graphql_forwards_cookie_to_protected_route(self):
+        """Browser sessions through GraphiQL: add cookie to the whitelist."""
         from fastapi import Depends, HTTPException, Request
 
         app = FastAPI()
@@ -138,7 +139,7 @@ class TestCredentialForwarding:
         async def private(user: str = Depends(session)):
             return Out(id=1, name=f"user:{user}")
 
-        handler = RouterGraphQLHandler(app)
+        handler = RouterGraphQLHandler(app, passthrough_headers=["authorization", "cookie"])
         handler.mount_graphql(app)
         async with LifespanManager(app):
             transport = httpx.ASGITransport(app=app)
@@ -167,8 +168,8 @@ class TestCredentialForwarding:
         async def who():
             return Out(id=1, name="pub")
 
-        handler = RouterGraphQLHandler(app)
-        handler.mount_graphql(app, graphql_path="/g", graphiql_path="/p", forwarded_headers=())
+        handler = RouterGraphQLHandler(app, passthrough_headers=[])
+        handler.mount_graphql(app, graphql_path="/g", graphiql_path="/p")
         async with LifespanManager(app):
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
@@ -178,20 +179,4 @@ class TestCredentialForwarding:
                     headers={"cookie": "x=1"},
                 )
         assert r.json() == {"data": {"demo": {"who": {"name": "pub"}}}}
-        await handler.aclose()
-
-    async def test_execute_forward_headers_override_provider(self):
-        app = FastAPI()
-
-        @app.get("/me", response_model=Out, tags=["demo"])
-        async def me():
-            return Out(id=1, name="ok")
-
-        handler = RouterGraphQLHandler(
-            app, headers_provider=lambda: {"x-token": "provider-token"}
-        )
-        result = await handler.execute(
-            "{ demo { me { name } } }", forward_headers={"x-token": "caller-token"}
-        )
-        assert result == {"data": {"demo": {"me": {"name": "ok"}}}}
         await handler.aclose()

@@ -6,13 +6,15 @@ reconstructed from ``/users?active=true``. Python identifiers are always legal
 GraphQL names, so no sanitization is needed; the path/query/body parameters
 still become the field's arguments (see ``scanner``).
 
-Because function names are only unique per module, two routes CAN map onto the
-same field name — that fails fast with ``DuplicateFieldError``.
+Uniqueness is scoped to one DOMAIN GROUP (one GraphQL object type), matching
+GraphQL's own rule — ``iam.get_user`` and ``admin.get_user`` coexist fine;
+two same-named routes inside the same tag group fail fast with
+``DuplicateFieldError`` (raised by the schema builder while assembling the
+group).
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -20,7 +22,7 @@ if TYPE_CHECKING:
 
 
 class DuplicateFieldError(ValueError):
-    """Two routes map onto the same GraphQL field name in one namespace."""
+    """Two routes map onto the same field name within one domain group."""
 
 
 def field_name_for(route: APIRoute) -> str:
@@ -31,23 +33,3 @@ def field_name_for(route: APIRoute) -> str:
             f"Route {route.path} has no usable endpoint function name ({name!r})"
         )
     return name
-
-
-def validate_field_names(fields: Sequence[tuple[str, str, str]]) -> None:
-    """Fail fast on duplicate field names within one namespace.
-
-    Args:
-        fields: ``(field_name, method, path)`` triples for one operation type.
-    """
-    seen: dict[str, tuple[str, str]] = {}
-    for field_name, method, path in fields:
-        previous = seen.get(field_name)
-        if previous is not None:
-            raise DuplicateFieldError(
-                f"GraphQL field name {field_name!r} is used by both "
-                f"{previous[0]} {previous[1]} and {method} {path} — both "
-                f"endpoints are implemented by functions of the same name. "
-                f"Rename one endpoint function, or filter one route out with "
-                f"include=/exclude= globs."
-            )
-        seen[field_name] = (method, path)

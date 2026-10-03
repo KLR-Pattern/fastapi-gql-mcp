@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from graphql import parse
 from graphql.language import OperationDefinitionNode, OperationType
 
+from fastapi_gql_mcp.invoker import filter_passthrough_headers
 from fastapi_gql_mcp.mcp.errors import (
     GQLMCPErrors,
     create_error_response,
@@ -25,27 +26,6 @@ if TYPE_CHECKING:
 _HINT_AFTER_SCHEMA = (
     "Write a GraphQL query against this schema and run it with graphql_query."
 )
-
-#: MCP client headers forwarded into route calls (the client's own
-#: credentials, e.g. Authorization from the agent's HTTP connection).
-_FORWARDED_HEADERS = frozenset(
-    {"cookie", "authorization", "x-api-key", "x-token"}
-)
-
-
-def _client_forwarded_headers() -> dict[str, str]:
-    """Headers of the MCP client's own HTTP request, if any (stdio: none)."""
-    try:
-        from fastmcp.server.dependencies import get_http_headers
-
-        return {
-            name: value
-            for name, value in get_http_headers(
-                include=set(_FORWARDED_HEADERS)
-            ).items()
-        }
-    except Exception:
-        return {}
 
 
 def register_executor_tools(
@@ -141,6 +121,23 @@ def _document_matches(document: str, *, mutation: bool) -> bool:
     return all(op == expected for op in operations)
 
 
+def _per_call_passthrough_headers(allowed: tuple[str, ...]) -> dict[str, Any]:
+    """Whitelisted headers off the MCP caller's own HTTP request, if any.
+
+    fastmcp's accessor never raises: with no live HTTP request (in-memory
+    Client transport, background-task workers) it returns {}, so per-call
+    identity is simply absent — protected routes answer 401 rather than the
+    call crashing. ``include`` re-admits credential headers fastmcp strips by
+    default (authorization, cookie); the whitelist filter applied afterwards
+    is the actual security boundary.
+    """
+    if not allowed:
+        return {}
+    from fastmcp.server.dependencies import get_http_headers
+
+    return filter_passthrough_headers(get_http_headers(include=set(allowed)), allowed)
+
+
 async def _execute(
     handler: RouterGraphQLHandler,
     document: str,
@@ -158,11 +155,8 @@ async def _execute(
             hint="Send the document to the matching tool.",
         )
     try:
-        result = await handler.execute(
-            document,
-            variables=variables,
-            forward_headers=_client_forwarded_headers(),
-        )
+        per_call = _per_call_passthrough_headers(handler.passthrough_headers)
+        result = await handler.execute(document, variables=variables, headers=per_call)
     except Exception as e:  # pragma: no cover - defensive
         return create_error_response(str(e), GQLMCPErrors.INTERNAL_ERROR)
 

@@ -13,7 +13,7 @@ is a request FastAPI will not 422.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any, cast
 
 from graphql import (
@@ -29,8 +29,8 @@ from graphql import (
     Undefined,
 )
 
-from fastapi_gql_mcp.invoker import RouteInvoker
-from fastapi_gql_mcp.naming import validate_field_names
+from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
+from fastapi_gql_mcp.naming import DuplicateFieldError
 from fastapi_gql_mcp.scanner import ParamInfo, RouteInfo
 from fastapi_gql_mcp.type_builder import TypeBuilder
 
@@ -75,15 +75,13 @@ def _arguments(route: RouteInfo, types: TypeBuilder) -> dict[str, GraphQLArgumen
 
 def _resolver(route: RouteInfo, invoker: RouteInvoker) -> Any:
     async def resolve(_root: Any, _info: Any, **kwargs: Any) -> Any:
-        # Per-execution credentials (browser cookie / MCP client header)
-        # travel via the GraphQL context; see RouterGraphQLHandler.execute.
-        forward: Mapping[str, str] = {}
-        context = getattr(_info, "context", None)
-        if isinstance(context, dict):
-            raw = context.get("forward_headers")
-            if isinstance(raw, Mapping):
-                forward = raw
-        return await invoker.invoke(route, kwargs, forward_headers=forward)
+        # Per-call headers ride in graphql-core's context_value. A foreign or
+        # absent context (someone calling graphql() on handler.schema directly)
+        # simply means "no per-call headers" — identical to pre-passthrough
+        # behavior.
+        context = _info.context
+        headers = context.headers if isinstance(context, InvocationContext) else None
+        return await invoker.invoke(route, kwargs, extra_headers=headers)
 
     return resolve
 
@@ -147,20 +145,23 @@ class SchemaBuilder:
         self._invoker = invoker
         self._types = types or TypeBuilder()
         self._used_type_names: dict[str, tuple[str, ...]] = {}
-        # Flat name -> field indexes consumed by the progressive-disclosure tools.
-        self._query_fields: dict[str, GraphQLField] = {}
-        self._mutation_fields: dict[str, GraphQLField] = {}
+        # (domain path, field name) -> field indexes consumed by the
+        # progressive-disclosure tools. The composite key is what allows the
+        # same field name in different domains (GraphQL only forbids name
+        # clashes within ONE object type, i.e. within one domain group).
+        self._query_fields: dict[tuple[tuple[str, ...], str], GraphQLField] = {}
+        self._mutation_fields: dict[tuple[tuple[str, ...], str], GraphQLField] = {}
 
     @property
     def types(self) -> TypeBuilder:
         return self._types
 
     @property
-    def query_fields(self) -> dict[str, GraphQLField]:
+    def query_fields(self) -> dict[tuple[tuple[str, ...], str], GraphQLField]:
         return dict(self._query_fields)
 
     @property
-    def mutation_fields(self) -> dict[str, GraphQLField]:
+    def mutation_fields(self) -> dict[tuple[tuple[str, ...], str], GraphQLField]:
         return dict(self._mutation_fields)
 
     # ------------------------------------------------------------------ names
@@ -188,9 +189,23 @@ class SchemaBuilder:
     ) -> GraphQLField:
         fields: dict[str, GraphQLField] = {}
         index = self._mutation_fields if mutation else self._query_fields
+        # Duplicate check scoped to THIS domain group — the same boundary
+        # GraphQL enforces (one object type). Different domains may each have
+        # their own field of the same name.
+        seen: dict[str, tuple[str, str]] = {}
         for route in node.own:
+            previous = seen.get(route.field_name)
+            if previous is not None:
+                raise DuplicateFieldError(
+                    f"GraphQL field name {route.field_name!r} is used twice inside "
+                    f"domain group '{':'.join(path)}' — by {previous[0]} {previous[1]} "
+                    f"and {route.method} {route.path}. Names must be unique within a "
+                    f"domain (the same GraphQL object type); rename one endpoint "
+                    f"function or re-tag one route into another domain."
+                )
+            seen[route.field_name] = (route.method, route.path)
             field = _leaf_field(route, self._invoker, self._types)
-            index[route.field_name] = field
+            index[(path, route.field_name)] = field
             fields[route.field_name] = field
         child_segments: list[str] = []
         for seg, child in sorted(node.children.items()):
@@ -233,13 +248,6 @@ class SchemaBuilder:
             raise GQLMCPConfigError(
                 "fastapi-gql-mcp found no routable endpoints: every route was skipped "
                 "(see the fastapi-gql-mcp warning log for reasons)."
-            )
-
-        # Duplicate function-name check stays namespace-wide (Query / Mutation).
-        validate_field_names([(r.field_name, r.method, r.path) for r in query_routes])
-        if mutation_routes:
-            validate_field_names(
-                [(r.field_name, r.method, r.path) for r in mutation_routes]
             )
 
         query_tree = _Group()

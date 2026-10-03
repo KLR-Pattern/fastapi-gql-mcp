@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **`headers_provider` removed; `passthrough_headers` defaults to
+  `("authorization",)`** (breaking). Credentials now have a single source —
+  the caller: each MCP/GraphQL client connects with its own credentials and
+  the bridge forwards them (case-insensitive whitelist; an explicitly empty
+  list disables forwarding). The server-side provider (and the
+  credential-amplification risk it created when mounted publicly) is gone;
+  machines without a user context configure the service credential on the
+  MCP client side, or use `handler.execute(..., headers=...)` directly.
+  With no HTTP request context (in-memory client) protected routes simply
+  answer 401.
+
+- **`RouterMCP.run()` is HTTP-only** (streamable HTTP with `host`/`port`
+  parameters, default `127.0.0.1:8000`). The wrapped FastAPI app is a
+  service whose routes speak HTTP, and per-caller credential passthrough
+  needs an HTTP request context that stdio has no notion of — so the stdio
+  transport and the `demo.mcp_stdio` entry point are removed (breaking).
+  Use `mount_to(app, "/mcp")` to serve MCP on the app's own port.
+
 ## 0.3.0 (2026-10-03)
 
 Schema shape + documentation wave (breaking).

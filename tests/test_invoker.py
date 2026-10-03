@@ -162,65 +162,56 @@ class TestInvoke:
         assert exc.value.extensions["code"] == "HTTP_422"
         await invoker.aclose()
 
-    async def test_headers_provider_sync(self):
-        from typing import Annotated
 
-        from fastapi import Depends, Header
+class TestPathConvertorRoutes:
+    """B1 regression: URLs must be rendered by Starlette (url_path_for), not
+    by string surgery on route.path — convertor syntax {id:int} / {p:path}
+    made hand-rolled replacement miss and 404 on the literal template."""
+
+    @staticmethod
+    def build_app() -> FastAPI:
+        class Got(BaseModel):
+            got: str
 
         app = FastAPI()
 
-        def auth(x_token: Annotated[str | None, Header()] = None):
-            return x_token
+        @app.get("/conv/{item_id:int}", response_model=Got)
+        async def get_conv(item_id: int) -> Got:
+            return Got(got=f"id={item_id}")
 
-        @app.get("/me", response_model=ItemOut)
-        async def me(user=Depends(auth)):
-            if user != "secret":
-                from fastapi import HTTPException
+        @app.get("/files/{p:path}", response_model=Got)
+        async def get_file(p: str) -> Got:
+            return Got(got=f"p={p}")
 
-                raise HTTPException(status_code=401, detail="unauthorized")
-            return ItemOut(id=1, name="me")
+        @app.get("/城市/{name}", response_model=Got)
+        async def get_city(name: str) -> Got:
+            return Got(got=f"city={name}")
 
-        r = route_for(app, "GET", "/me")
+        return app
 
-        invoker = RouteInvoker(app, manage_lifespan=False)  # no provider -> 401
+    async def _invoke(self, path: str, kwargs: dict) -> dict:
+        app = self.build_app()
+        routes, _ = RouterScanner(app).scan()
+        route = next(r for r in routes if r.path == path)
+        invoker = RouteInvoker(app, manage_lifespan=False)
+        try:
+            return await invoker.invoke(route, kwargs)
+        finally:
+            await invoker.aclose()
+
+    async def test_int_convertor_b1_regression(self):
+        assert await self._invoke("/conv/{item_id:int}", {"item_id": 5}) == {"got": "id=5"}
+
+    async def test_path_convertor_with_spaces(self):
+        assert await self._invoke("/files/{p:path}", {"p": "docs/read me.pdf"}) == {
+            "got": "p=docs/read me.pdf"
+        }
+
+    async def test_unicode_path_segment(self):
+        assert await self._invoke("/城市/{name}", {"name": "上海"}) == {"got": "city=上海"}
+
+    async def test_negative_int_is_field_error_not_crash(self):
+        # IntegerConvertor asserts on negatives; surfaced as BAD_REQUEST.
         with pytest.raises(GraphQLError) as exc:
-            await invoker.invoke(r, {})
-        assert exc.value.extensions["code"] == "HTTP_401"
-        await invoker.aclose()
-
-        invoker = RouteInvoker(
-            app, headers_provider=lambda: {"x-token": "secret"}, manage_lifespan=False
-        )
-        assert await invoker.invoke(r, {}) == {"id": 1, "name": "me"}
-        await invoker.aclose()
-
-    async def test_headers_provider_async(self):
-        from typing import Annotated
-
-        from fastapi import Depends, Header
-
-        app = FastAPI()
-
-        def auth(x_token: Annotated[str | None, Header()] = None):
-            return x_token
-
-        @app.get("/me", response_model=ItemOut)
-        async def me(user=Depends(auth)):
-            if user != "async-token":
-                from fastapi import HTTPException
-
-                raise HTTPException(status_code=401, detail="unauthorized")
-            return ItemOut(id=1, name="me")
-
-        r = route_for(app, "GET", "/me")
-        invoker = RouteInvoker(
-            app,
-            headers_provider=async_provider,
-            manage_lifespan=False,
-        )
-        assert await invoker.invoke(r, {}) == {"id": 1, "name": "me"}
-        await invoker.aclose()
-
-
-async def async_provider() -> dict[str, str]:
-    return {"x-token": "async-token"}
+            await self._invoke("/conv/{item_id:int}", {"item_id": -1})
+        assert exc.value.extensions["code"] == "BAD_REQUEST"

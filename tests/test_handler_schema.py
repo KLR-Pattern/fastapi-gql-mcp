@@ -162,21 +162,46 @@ class TestConfigErrors:
 
 
 class TestDuplicateEndpointNames:
-    def test_same_function_name_on_two_routes_fails_fast(self):
+    def test_same_name_same_domain_fails_fast(self):
         app = FastAPI()
 
-        @app.get("/a/{a_id}", response_model=ItemOut)
-        async def get_thing(a_id: int):
-            return ItemOut(id=a_id, name="a")
+        @app.get("/users/{user_id}", response_model=ItemOut, tags=["iam"])
+        async def get_user(user_id: int):
+            return ItemOut(id=user_id, name="a")
 
-        @app.get("/b/{b_id}", response_model=ItemOut)
-        async def get_thing(b_id: int):  # noqa: F811 — the collision under test
-            return ItemOut(id=b_id, name="b")
+        @app.get("/staff/users/{user_id}", response_model=ItemOut, tags=["iam"])
+        async def get_user(user_id: int):  # noqa: F811 — the collision under test
+            return ItemOut(id=user_id, name="b")
 
         from fastapi_gql_mcp.naming import DuplicateFieldError
 
-        with pytest.raises(DuplicateFieldError, match="Rename one endpoint function"):
+        with pytest.raises(DuplicateFieldError, match="domain group 'iam'"):
             RouterGraphQLHandler(app)
+
+    async def test_same_name_different_domains_builds_and_executes(self):
+        """D1: names must only clash WITHIN a domain group (one object type).
+
+        iam.get_user and admin.iam.get_user are different GraphQL object
+        types' fields — both must build and both must route to their own
+        endpoint.
+        """
+        app = FastAPI()
+
+        @app.get("/users/{user_id}", response_model=ItemOut, tags=["iam"])
+        async def get_user(user_id: int):
+            return ItemOut(id=user_id, name="public")
+
+        @app.get("/admin/users/{user_id}", response_model=ItemOut, tags=["admin:iam"])
+        async def get_user(user_id: int):  # noqa: F811 — same name, other domain
+            return ItemOut(id=user_id, name="admin")
+
+        handler = RouterGraphQLHandler(app)
+        result = await handler.execute(
+            "{ iam { get_user(user_id: 1) { name } }"
+            " admin { iam { get_user(user_id: 2) { name } } } }"
+        )
+        assert result["data"]["iam"]["get_user"] == {"name": "public"}
+        assert result["data"]["admin"]["iam"]["get_user"] == {"name": "admin"}
 
     def test_same_name_across_namespaces_is_fine(self):
         app = FastAPI()

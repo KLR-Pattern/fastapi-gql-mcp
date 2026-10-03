@@ -10,15 +10,12 @@ from fastapi import FastAPI
 
 from fastapi_gql_mcp.domains import DomainRegistry
 from fastapi_gql_mcp.handler import RouterGraphQLHandler
-from fastapi_gql_mcp.invoker import HeadersProvider
 from fastapi_gql_mcp.mcp.tools import register_simple_tools
 
 logger = logging.getLogger(__name__)
 
 # Route count above which "auto" mode prefers progressive disclosure (P2).
 PROGRESSIVE_THRESHOLD = 25
-
-_Transport = Literal["stdio", "http"]
 
 
 def _compose_lifespan(host: FastAPI, sub_http_app: Any) -> None:
@@ -54,8 +51,13 @@ class RouterMCP:
             mutations. Default False (read-only).
         mutation_include: fnmatch globs limiting WHICH write routes become
             mutations (requires allow_mutation=True).
-        headers_provider: Callable (sync or async) returning headers merged
-            into every route call — inject credentials here.
+        passthrough_headers: Whitelist of inbound header names (case
+            insensitive) MCP/GraphQL callers may forward into route calls.
+            ``None`` (default) forwards ``authorization`` — each client acts
+            as its own JWT user, the FastAPI security schemes doing the
+            verifying. Pass ``[]`` to disable forwarding entirely. With no
+            HTTP request context (in-memory client) nothing is forwarded:
+            protected routes answer 401.
         mode: ``simple`` registers get_schema + graphql_query;
             ``progressive`` registers the 4-layer tag-based disclosure
             (list_domains -> list_queries -> get_query_schema ->
@@ -72,11 +74,11 @@ class RouterMCP:
         include: Sequence[str] | None = None,
         exclude: Sequence[str] | None = None,
         allow_mutation: bool = False,
-        headers_provider: HeadersProvider | None = None,
         mode: Literal["auto", "simple", "progressive"] = "auto",
         include_hidden: bool = False,
         progressive_threshold: int = PROGRESSIVE_THRESHOLD,
         mutation_include: Sequence[str] | None = None,
+        passthrough_headers: Sequence[str] | None = None,
     ) -> None:
         self._mode = mode
         self._progressive_threshold = progressive_threshold
@@ -85,9 +87,9 @@ class RouterMCP:
             include=include,
             exclude=exclude,
             allow_mutation=allow_mutation,
-            headers_provider=headers_provider,
             include_hidden=include_hidden,
             mutation_include=mutation_include,
+            passthrough_headers=passthrough_headers,
         )
         self._resolved_mode = self._resolve_mode(mode, app)
         self._domains = DomainRegistry(self._handler.routes)
@@ -145,9 +147,15 @@ class RouterMCP:
     def mcp(self) -> Any:
         return self._mcp
 
-    def run(self, *, transport: _Transport = "stdio") -> None:
-        """Run the MCP server (stdio by default, http for remote clients)."""
-        self._mcp.run(transport=transport)
+    def run(self, *, host: str = "127.0.0.1", port: int = 8000) -> None:
+        """Run the MCP server over streamable HTTP.
+
+        HTTP is the only transport: the wrapped app is a service whose routes
+        speak HTTP, and per-caller credential passthrough needs the HTTP
+        request context that stdio has no notion of. Use ``mount_to`` to
+        serve MCP on the app's own port instead of opening a second one.
+        """
+        self._mcp.run(transport="http", host=host, port=port)
 
     def mount_to(self, app: FastAPI, path: str = "/mcp") -> None:
         """Mount the MCP server into a FastAPI app (streamable HTTP).

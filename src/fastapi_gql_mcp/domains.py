@@ -42,22 +42,28 @@ def domains_for(tags: Sequence[str], path: str) -> frozenset[tuple[str, ...]]:
 
 
 class DomainNode:
-    """One node of the domain tree aggregating its routes' field names."""
+    """One node of the domain tree aggregating its routes' field names.
+
+    Field names are keyed as ``(domain_path, field_name)`` pairs: names only
+    need to be unique WITHIN one domain group (GraphQL: within one object
+    type), so two domains may each carry their own ``get_user``.
+    """
 
     def __init__(self, path: tuple[str, ...]) -> None:
         self.path = path
-        self.query_fields: set[str] = set()
-        self.mutation_fields: set[str] = set()
+        self.query_fields: set[tuple[tuple[str, ...], str]] = set()
+        self.mutation_fields: set[tuple[tuple[str, ...], str]] = set()
 
     @property
     def name(self) -> str:
         return self.path[-1]
 
     def add(self, route: RouteInfo) -> None:
+        key = (self.path, route.field_name)
         if route.is_mutation:
-            self.mutation_fields.add(route.field_name)
+            self.mutation_fields.add(key)
         else:
-            self.query_fields.add(route.field_name)
+            self.query_fields.add(key)
 
     def summary(self) -> dict[str, object]:
         return {
@@ -108,10 +114,10 @@ class DomainRegistry:
 
     def subtree_fields(
         self, path: tuple[str, ...]
-    ) -> tuple[set[str], set[str]]:
-        """All query/mutation field names at or below ``path``."""
-        queries: set[str] = set()
-        mutations: set[str] = set()
+    ) -> tuple[set[tuple[tuple[str, ...], str]], set[tuple[tuple[str, ...], str]]]:
+        """All (domain path, field name) pairs at or below ``path``."""
+        queries: set[tuple[tuple[str, ...], str]] = set()
+        mutations: set[tuple[tuple[str, ...], str]] = set()
         for node_path, node in self._nodes.items():
             if node_path[: len(path)] == path:
                 queries |= node.query_fields

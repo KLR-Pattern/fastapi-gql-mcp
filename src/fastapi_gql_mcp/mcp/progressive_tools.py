@@ -185,9 +185,9 @@ def register_progressive_tools(
             return _unknown_domain(domain, registry)
         names, _ = registry.subtree_fields(path)
         fields = [
-            _field_brief(name, index[name])
-            for name in sorted(names)
-            if name in index
+            _field_brief(name, index[(owner, name)])
+            for owner, name in sorted(names)
+            if (owner, name) in index
         ]
         return create_success_response(
             {"domain": domain, "queries": fields},
@@ -215,9 +215,9 @@ def register_progressive_tools(
                 return _unknown_domain(domain, registry)
             _, names = registry.subtree_fields(path)
             fields = [
-                _field_brief(name, mutation_index[name])
-                for name in sorted(names)
-                if name in mutation_index
+                _field_brief(name, mutation_index[(owner, name)])
+                for owner, name in sorted(names)
+                if (owner, name) in mutation_index
             ]
             return create_success_response({"domain": domain, "mutations": fields})
 

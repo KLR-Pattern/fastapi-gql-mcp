@@ -10,7 +10,7 @@ Endpoints:
 - GraphQL HTTP:         POST http://127.0.0.1:8010/graphql
 """
 
-from demo.app import DEMO_TOKEN, create_app
+from demo.app import create_app
 from fastapi_gql_mcp import RouterMCP
 
 app = create_app()
@@ -24,7 +24,8 @@ mcp = RouterMCP(
     # expose the tag-based disclosure tools:
     # list_domains -> list_queries/list_mutations -> get_query_schema -> graphql_query
     mode="progressive",
-    headers_provider=lambda: {"x-token": DEMO_TOKEN},
+    # Callers bring the demo token themselves (single identity source):
+    passthrough_headers=["x-token", "authorization"],
 )
 mcp.mount_to(app, "/mcp")
 mcp.handler.mount_graphql(app)

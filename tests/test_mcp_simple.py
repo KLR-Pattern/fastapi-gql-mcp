@@ -1,9 +1,7 @@
 """MCP simple mode: in-memory fastmcp Client end-to-end."""
 
-from typing import Annotated
-
 import pytest
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastmcp import Client
 from pydantic import BaseModel
 
@@ -22,27 +20,24 @@ class UserCreate(BaseModel):
 
 
 def build_app() -> FastAPI:
+    """Auth-free app: query/composition behavior lives here, credential
+    behavior (passthrough, 401s) in test_passthrough_headers.py."""
     app = FastAPI()
     users = {1: UserOut(id=1, name="alice", email="a@x.io"), 2: UserOut(id=2, name="bob")}
     next_id = 3
 
-    def auth(x_token: Annotated[str | None, Header()] = None):
-        if x_token != "secret":
-            raise HTTPException(status_code=401, detail="unauthorized")
-        return x_token
-
     @app.get("/users", response_model=list[UserOut], tags=["iam"])
-    async def list_users(active: bool = True, user=Depends(auth)):
+    async def list_users(active: bool = True):
         return list(users.values()) if active else []
 
     @app.get("/users/{user_id}", response_model=UserOut, tags=["iam"])
-    async def get_user(user_id: int, user=Depends(auth)):
+    async def get_user(user_id: int):
         if user_id not in users:
             raise HTTPException(status_code=404, detail="no such user")
         return users[user_id]
 
     @app.post("/users", response_model=UserOut, tags=["iam"])
-    async def create_user(payload: UserCreate, user=Depends(auth)):
+    async def create_user(payload: UserCreate):
         nonlocal next_id
         created = UserOut(id=next_id, name=payload.name, email=payload.email)
         users[next_id] = created
@@ -63,16 +58,6 @@ def mcp():
     return RouterMCP(build_app(), name="test-api", allow_mutation=True)
 
 
-@pytest.fixture
-def authed_mcp():
-    return RouterMCP(
-        build_app(),
-        name="test-api",
-        allow_mutation=True,
-        headers_provider=lambda: {"x-token": "secret"},
-    )
-
-
 class TestGetSchema:
     async def test_get_schema_returns_sdl(self, mcp):
         async with Client(mcp.mcp) as client:
@@ -84,20 +69,8 @@ class TestGetSchema:
 
 
 class TestGraphqlQuery:
-    async def test_query_with_auth_provider(self, authed_mcp):
-        async with Client(authed_mcp.mcp) as client:
-            result = payload(
-                await client.call_tool(
-                    "graphql_query",
-                    {"query": "{ iam { list_users { id name } } }"},
-                )
-            )
-        assert result["success"] is True
-        data = result["data"]["data"]
-        assert data["iam"]["list_users"][0]["name"] == "alice"
-
-    async def test_query_variables(self, authed_mcp):
-        async with Client(authed_mcp.mcp) as client:
+    async def test_query_variables(self, mcp):
+        async with Client(mcp.mcp) as client:
             result = payload(
                 await client.call_tool(
                     "graphql_query",
@@ -113,8 +86,8 @@ class TestGraphqlQuery:
             "email": "a@x.io",
         }
 
-    async def test_field_projection_and_composition(self, authed_mcp):
-        async with Client(authed_mcp.mcp) as client:
+    async def test_field_projection_and_composition(self, mcp):
+        async with Client(mcp.mcp) as client:
             result = payload(
                 await client.call_tool(
                     "graphql_query",
@@ -128,8 +101,8 @@ class TestGraphqlQuery:
         assert data["iam"]["a"] == []
         assert data["iam"]["b"] == {"name": "bob"}
 
-    async def test_partial_failure_keeps_siblings(self, authed_mcp):
-        async with Client(authed_mcp.mcp) as client:
+    async def test_partial_failure_keeps_siblings(self, mcp):
+        async with Client(mcp.mcp) as client:
             result = payload(
                 await client.call_tool(
                     "graphql_query",
@@ -144,17 +117,8 @@ class TestGraphqlQuery:
         assert data["iam"]["missing"] is None
         assert result["data"]["errors"][0]["extensions"]["code"] == "HTTP_404"
 
-    async def test_without_credentials_401(self, mcp):
+    async def test_invalid_query_error_envelope(self, mcp):
         async with Client(mcp.mcp) as client:
-            result = payload(
-                await client.call_tool("graphql_query", {"query": "{ iam { list_users { id } } }"})
-            )
-        # The field failed (401) but the query itself was valid.
-        assert result["data"]["data"]["iam"]["list_users"] is None
-        assert result["data"]["errors"][0]["extensions"]["code"] == "HTTP_401"
-
-    async def test_invalid_query_error_envelope(self, authed_mcp):
-        async with Client(authed_mcp.mcp) as client:
             result = payload(
                 await client.call_tool("graphql_query", {"query": "{ nonsense }"})
             )
@@ -163,8 +127,8 @@ class TestGraphqlQuery:
         assert "Cannot query field" in result["error"]
         assert result["hint"]
 
-    async def test_query_rejects_mutation_document(self, authed_mcp):
-        async with Client(authed_mcp.mcp) as client:
+    async def test_query_rejects_mutation_document(self, mcp):
+        async with Client(mcp.mcp) as client:
             result = payload(
                 await client.call_tool(
                     "graphql_query",
@@ -175,8 +139,8 @@ class TestGraphqlQuery:
 
 
 class TestMutationTool:
-    async def test_mutation_execution(self, authed_mcp):
-        async with Client(authed_mcp.mcp) as client:
+    async def test_mutation_execution(self, mcp):
+        async with Client(mcp.mcp) as client:
             result = payload(
                 await client.call_tool(
                     "graphql_mutation",

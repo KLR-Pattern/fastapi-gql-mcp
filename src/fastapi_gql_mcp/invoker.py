@@ -9,12 +9,10 @@ on first use and held open until ``aclose()``.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
 
 from asgi_lifespan import LifespanManager
 from graphql import GraphQLError
@@ -23,8 +21,6 @@ from httpx import ASGITransport, AsyncClient, Response
 from fastapi_gql_mcp.scanner import RouteInfo
 
 logger = logging.getLogger(__name__)
-
-HeadersProvider = Callable[[], "dict[str, str] | Awaitable[dict[str, str]]"]
 
 _BASE_HEADERS: dict[str, str] = {"accept": "application/json"}
 _MAX_ERROR_BODY = 500
@@ -45,15 +41,41 @@ class RequestPlan:
     headers: dict[str, str]
 
 
+@dataclass(frozen=True)
+class InvocationContext:
+    """Per-execution context threaded through graphql-core's ``context_value``.
+
+    graphql() has no native per-call header concept; context_value is the
+    standard side channel. Carrying headers here keeps the once-built schema
+    reusable across concurrent executions with different callers (instance
+    state would race, a module ContextVar would be implicit and untestable).
+    """
+
+    headers: Mapping[str, str] | None = None
+
+
+def filter_passthrough_headers(
+    headers: Mapping[str, str], allowed: Collection[str]
+) -> dict[str, str]:
+    """Keep only whitelisted header names, normalized to lowercase.
+
+    This is the security boundary between untrusted caller headers and the
+    wrapped app: a name not in ``allowed`` never reaches a route, so an MCP
+    client cannot smuggle internal headers (x-internal-token and friends).
+    Matching is case-insensitive on both sides — HTTP/2 lowercases all field
+    names, and user config may not.
+    """
+    allowed_lower = {h.strip().lower() for h in allowed}
+    return {k.lower(): v for k, v in headers.items() if k.lower() in allowed_lower}
+
+
 def build_request(
     route: RouteInfo,
     kwargs: Mapping[str, Any],
     extra_headers: Mapping[str, str] | None = None,
 ) -> RequestPlan:
     """Translate GraphQL resolver kwargs into an HTTP request plan."""
-    path = route.path
-    params: list[tuple[str, str]] = []
-
+    path_values: dict[str, Any] = {}
     for param in route.path_params:
         value = kwargs.get(param.name, param.default)
         rendered = _render_param(value)
@@ -64,7 +86,26 @@ def build_request(
                 extensions={"code": "BAD_REQUEST"},
             )
         # The path template holds the raw function-arg name, not any alias.
-        path = path.replace("{" + param.raw_name + "}", quote(str(rendered), safe=""))
+        path_values[param.raw_name] = rendered
+
+    # Let Starlette render the URL from its own route definition: it owns the
+    # template syntax (path convertors like {id:int} / {p:path}) and the
+    # per-convertor value encoding, so no string surgery on route.path here.
+    try:
+        url = route.route.url_path_for(route.field_name, **path_values)
+    except AssertionError as exc:  # convertor rejects the value (e.g. int < 0)
+        raise GraphQLError(
+            f"Invalid path parameter for {route.method} {route.path}: {exc}",
+            extensions={"code": "BAD_REQUEST"},
+        ) from exc
+    if url is None:  # pragma: no cover - param names come from the same route
+        raise GraphQLError(
+            f"Route {route.method} {route.path} rejected its path parameters",
+            extensions={"code": "BAD_REQUEST"},
+        )
+    path = str(url)
+
+    params: list[tuple[str, str]] = []
 
     for param in route.query_params:
         value = kwargs.get(param.name, param.default)
@@ -110,18 +151,16 @@ def _render_param(value: Any) -> Any:
 
 
 class RouteInvoker:
-    """Calls routes through the ASGI app, managing lifespan and auth headers."""
+    """Calls routes through the ASGI app, managing its lifespan."""
 
     def __init__(
         self,
         app: Any,
         *,
-        headers_provider: HeadersProvider | None = None,
         timeout: float = 30.0,
         manage_lifespan: bool = True,
     ) -> None:
         self._app = app
-        self._headers_provider = headers_provider
         self._timeout = timeout
         self._manage_lifespan = manage_lifespan
         self._client: AsyncClient | None = None
@@ -177,31 +216,21 @@ class RouteInvoker:
         route: RouteInfo,
         kwargs: Mapping[str, Any],
         *,
-        forward_headers: Mapping[str, str] | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> Any:
-        """Execute one route and return its JSON response.
-
-        Header precedence: ``forward_headers`` (the caller's own request
-        credentials, e.g. a browser session cookie or an MCP client's
-        Authorization header) override anything from ``headers_provider``.
-        """
+        """Execute one route and return its JSON response."""
         await self.start()
         client = self._client
         if client is None:  # pragma: no cover - start() guarantees a client
             raise GQLMCPRuntimeError("RouteInvoker failed to start")
 
-        extra_headers: dict[str, str] = {}
-        if self._headers_provider is not None:
-            provided = self._headers_provider()
-            if inspect.isawaitable(provided):
-                provided = await provided
-            extra_headers = {str(k): str(v) for k, v in dict(provided).items()}
-        if forward_headers:
-            extra_headers.update(
-                {str(k): str(v) for k, v in dict(forward_headers).items()}
-            )
-
-        plan = build_request(route, kwargs, extra_headers)
+        # Credentials ride exclusively in per-call headers (single identity
+        # source: the caller). There is no server-side provider to merge.
+        plan = build_request(
+            route,
+            kwargs,
+            {str(k): str(v) for k, v in extra_headers.items()} if extra_headers else None,
+        )
         response = await client.request(
             plan.method,
             plan.path,

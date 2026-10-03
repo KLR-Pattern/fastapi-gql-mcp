@@ -75,22 +75,23 @@ class TestRegistry:
         reg = registry()
         invoice = reg.node(("billing", "invoice"))
         assert invoice is not None
-        assert invoice.query_fields == {"invoices"}
+        assert invoice.query_fields == {(("billing", "invoice"), "invoices")}
 
     def test_multi_tag_route_in_both_domains(self):
         reg = registry()
         analytics = reg.node(("analytics",))
         assert analytics is not None
-        assert "reports" in analytics.query_fields
+        assert (("analytics",), "reports") in analytics.query_fields
         billing_root = reg.node(("billing",))
         assert billing_root is not None
-        assert "reports" in billing_root.query_fields  # tagged 'billing' too
+        assert (("billing",), "reports") in billing_root.query_fields  # tagged 'billing' too
 
     def test_subtree_aggregates(self):
         reg = registry()
         queries, mutations = reg.subtree_fields(("billing",))
-        assert "invoices" in queries and "reports" in queries
-        assert mutations == {"payments"}
+        assert (("billing", "invoice"), "invoices") in queries
+        assert (("billing",), "reports") in queries
+        assert mutations == {(("billing", "payment"), "payments")}
 
     def test_summary_shape(self):
         summary = registry().summary()
@@ -102,9 +103,9 @@ class TestRegistry:
     def test_untagged_and_root(self):
         reg = registry()
         users = reg.node(("users",))
-        assert users is not None and users.query_fields == {"users"}
+        assert users is not None and users.query_fields == {(("users",), "users")}
         general = reg.node(("general",))
-        assert general is not None and general.query_fields == {"root"}
+        assert general is not None and general.query_fields == {(("general",), "root")}
 
     def test_empty_routes(self):
         reg = DomainRegistry([])

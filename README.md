@@ -12,7 +12,7 @@ app = FastAPI()
 # ... your existing routes ...
 
 mcp = RouterMCP(app, name="my-app")
-mcp.run()  # stdio MCP server with get_schema + graphql_query tools
+mcp.run()  # HTTP MCP server with get_schema + graphql_query tools
 ```
 
 ## Why
@@ -30,7 +30,8 @@ agents get:
 - **your docs, verbatim** — docstrings and `description=` metadata travel into
   the schema the agent reads
 - **real auth** — queries run through the actual ASGI app, so `Depends`,
-  middleware and headers apply; pass credentials via `headers_provider`
+  middleware and headers apply; pass credentials via per-caller header
+  passthrough
 
 ### Compared to the alternatives
 
@@ -126,15 +127,21 @@ uv add 'fastapi-gql-mcp[mcp]'     # + MCP server (fastmcp)
 
 ## Usage
 
-### MCP server (stdio)
+### MCP server (HTTP)
+
+`run()` serves streamable HTTP (the only transport — the wrapped app is a
+service, and per-caller credential passthrough needs an HTTP request
+context). Use `mount_to(app, "/mcp")` to serve MCP on the app's own port.
 
 ```python
 mcp = RouterMCP(
     app,
     name="my-app",
     allow_mutation=False,
-    headers_provider=lambda: {"authorization": "Bearer ..."},  # auth passthrough
     include=["/api/*"],
+    # The caller's own Authorization header travels to the routes by default;
+    # an empty list disables forwarding entirely.
+    # passthrough_headers=["authorization"],
 )
 mcp.run()
 ```
@@ -178,24 +185,26 @@ result = await handler.execute(
 ## Authentication
 
 Route calls travel through the real ASGI app in-process, so `Depends`,
-middleware and security schemes behave exactly as over HTTP. Two consequences:
+middleware and security schemes behave exactly as over HTTP. Credentials have
+a **single source: the caller** — the FastAPI security schemes are the only
+verifiers, and this bridge never holds or manages tokens of its own.
 
-- **Without credentials, protected routes fail** — you will see field errors
-  like `HTTP_401` in query results.
-- **Provide credentials via `headers_provider`** (sync or async, evaluated per
-  request): static tokens, environment lookups, or short-lived tokens from
-  your own OAuth client:
+- **Per-caller passthrough (default)**: each MCP/GraphQL client connects with
+  its own credentials and `passthrough_headers` (default
+  `("authorization",)`) forwards them to the routes — queries run as the
+  caller, exactly as they would over HTTP. An explicitly empty list disables
+  forwarding; headers are matched case-insensitively and only whitelisted
+  names ever reach a route (no smuggling `x-internal-token` past the bridge).
+- **Without credentials, protected routes fail** — field errors like
+  `HTTP_401` in query results; nothing falls back to a server-side identity.
+- **Machines without a user context** configure the service credential on the
+  MCP client side (or, for programmatic use, pass
+  `handler.execute(..., headers={...})` directly).
 
-  ```python
-  async def headers_provider() -> dict[str, str]:
-      return {"authorization": f"Bearer {await get_access_token()}"}
-
-  mcp = RouterMCP(app, headers_provider=headers_provider)
-  ```
-
-Keep in mind the provider runs with the server's privileges — scope the token
-to what the agent should be allowed to do (e.g. read-only), and combine with
-`allow_mutation=False` / `mutation_include` to keep writes out of reach.
+Expose the MCP endpoint only behind an entrance you control (network, or a
+FastAPI `Depends` on the mounted route) — the bridge authenticates no one
+itself, and combine with `allow_mutation=False` / `mutation_include` to keep
+writes out of reach.
 
 ## Demo
 
@@ -206,7 +215,6 @@ GraphiQL:
 
 ```bash
 uv run --extra mcp python -m demo               # REST + /mcp/ + /graphiql + /graphql on :8010
-uv run --extra mcp python -m demo.mcp_stdio     # stdio MCP server (Claude Desktop etc.)
 uv run --extra mcp python -m demo.mcp_walkthrough  # agent's-eye MCP walkthrough, no client needed
 ```
 

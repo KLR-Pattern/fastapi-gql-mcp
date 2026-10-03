@@ -11,7 +11,7 @@ from typing import Any
 
 from graphql import GraphQLSchema, graphql, print_schema
 
-from fastapi_gql_mcp.invoker import HeadersProvider, RouteInvoker
+from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
 from fastapi_gql_mcp.scanner import RouteInfo, RouterScanner
 from fastapi_gql_mcp.schema_builder import GQLMCPConfigError, SchemaBuilder
 from fastapi_gql_mcp.type_builder import TypeBuilder
@@ -27,11 +27,22 @@ class RouterGraphQLHandler:
         include: Sequence[str] | None = None,
         exclude: Sequence[str] | None = None,
         allow_mutation: bool = False,
-        headers_provider: HeadersProvider | None = None,
         include_hidden: bool = False,
         mutation_include: Sequence[str] | None = None,
+        passthrough_headers: Sequence[str] | None = None,
     ) -> None:
-        self._invoker = RouteInvoker(app, headers_provider=headers_provider)
+        self._invoker = RouteInvoker(app)
+        # Whitelist of inbound header names untrusted callers may forward into
+        # route calls, lowercased at construction. None = the default
+        # ("authorization",): same-app bridges speak for the caller, so the
+        # caller's own credential travels by default. An explicitly empty
+        # sequence disables passthrough entirely.
+        if passthrough_headers is None:
+            self._passthrough_headers: tuple[str, ...] = ("authorization",)
+        else:
+            self._passthrough_headers = tuple(
+                h.strip().lower() for h in passthrough_headers if h.strip()
+            )
         self._types = TypeBuilder()
         routes, _skips = RouterScanner(
             app,
@@ -58,12 +69,17 @@ class RouterGraphQLHandler:
         return self._invoker
 
     @property
-    def query_fields(self) -> dict[str, Any]:
-        """Flat field-name -> GraphQLField index (grouped schema's leaves)."""
+    def passthrough_headers(self) -> tuple[str, ...]:
+        """Lowercased header names callers may forward (default: authorization only)."""
+        return self._passthrough_headers
+
+    @property
+    def query_fields(self) -> dict[tuple[tuple[str, ...], str], Any]:
+        """(domain path, field name) -> GraphQLField index (the schema's leaves)."""
         return self._builder.query_fields
 
     @property
-    def mutation_fields(self) -> dict[str, Any]:
+    def mutation_fields(self) -> dict[tuple[tuple[str, ...], str], Any]:
         return self._builder.mutation_fields
 
     def get_sdl(self) -> str:
@@ -76,13 +92,14 @@ class RouterGraphQLHandler:
         *,
         variables: dict[str, Any] | None = None,
         operation_name: str | None = None,
-        forward_headers: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         """Execute a GraphQL query against the app's routes.
 
-        ``forward_headers`` carry THIS caller's credentials (cookie /
-        authorization) into every route call, overriding headers_provider —
-        so the agent queries with its own identity.
+        ``headers`` are TRUSTED per-call headers — the single credential
+        channel (there is no server-side provider). Callers sourcing them
+        from an untrusted origin (MCP request, /graphql endpoint) must filter
+        them through ``filter_passthrough_headers`` first.
         """
         await self._invoker.start()
         result = await graphql(
@@ -90,7 +107,7 @@ class RouterGraphQLHandler:
             query,
             variable_values=variables or {},
             operation_name=operation_name,
-            context_value={"forward_headers": dict(forward_headers or {})},
+            context_value=InvocationContext(headers=headers),
         )
         payload: dict[str, Any] = {}
         if result.data is not None:
@@ -109,7 +126,6 @@ class RouterGraphQLHandler:
         *,
         graphql_path: str = "/graphql",
         graphiql_path: str = "/graphiql",
-        forwarded_headers: Sequence[str] | None = None,
     ) -> None:
         """Serve a GraphiQL playground + GraphQL HTTP endpoint on a FastAPI app.
 
@@ -121,10 +137,7 @@ class RouterGraphQLHandler:
         if app is self._invoker.app:
             self._invoker.disable_lifespan_management()
         router = create_graphql_router(
-            self,
-            graphql_path=graphql_path,
-            graphiql_path=graphiql_path,
-            forwarded_headers=forwarded_headers,
+            self, graphql_path=graphql_path, graphiql_path=graphiql_path
         )
         app.include_router(router)
 
