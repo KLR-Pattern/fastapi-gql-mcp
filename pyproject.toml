@@ -17,7 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 # 4.0.10 has a regression (missing fastmcp.server.tasks.routing on the HTTP
 # tool-execution path); 4.0.9 is the newest working release.
-mcp = ["fastmcp>=4.0.9,<4.0.10"]
+mcp = ["fastmcp==4.0.10"]
 
 [build-system]
 requires = ["hatchling"]
@@ -32,7 +32,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.6",
     "mypy>=1.11",
-    "fastmcp>=4.0.9,<4.0.10",
+    "fastmcp==4.0.10",
 ]
 
 [tool.ruff]
