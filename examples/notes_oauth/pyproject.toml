@@ -13,6 +13,13 @@ dependencies = [
     "fastapi-gql-mcp[mcp]>=0.3",
 ]
 
+[dependency-groups]
+# optional tracing: uv sync --group otel + OTEL_OTLP_ENDPOINT=http://localhost:4317
+otel = [
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp>=1.20",
+]
+
 [tool.uv.sources]
 # The example consumes the library from the repo root, exactly like an
 # external consumer would from PyPI — tests/test_example_public_api.py

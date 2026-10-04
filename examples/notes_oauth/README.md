@@ -114,6 +114,23 @@ mutation → cleanup. With the MCP OAuth proxy configured, the MCP leg is
 skipped (that login is interactive — use Claude Code); everything else
 runs headlessly.
 
+## Optional: OpenTelemetry tracing (Jaeger)
+
+Spans come from fastmcp (tool level) and FastAPI >= 0.142 (route level)
+natively — no instrumentation code. Opt in with a dependency group and one
+env var:
+
+```bash
+docker run -d --name jaeger-smoke -p 16686:16686 -p 4317:4317 jaegertracing/all-in-one:latest
+uv sync --group otel
+OTEL_OTLP_ENDPOINT=http://localhost:4317 uv run python -m app
+```
+
+Then watch http://localhost:16686 — service `notes-oauth`. Every MCP query
+is one waterfall: `tools/call graphql_query > graphql.execute` with each
+fanned-out route (`GET /api/notes`, …) nested underneath (the bridge
+injects W3C traceparent — see [otel_smoke.md](../otel_smoke.md)).
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
