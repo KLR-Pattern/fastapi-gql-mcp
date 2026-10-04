@@ -28,13 +28,23 @@
   ],
   "composition": {
     "tool_calls": 2,
-    "mean_ms": 1.42,
-    "p95_ms": 1.47
+    "runs": 3,
+    "mean_ms_per_run": [
+      1.44,
+      1.41,
+      1.39
+    ],
+    "mean_ms": 1.41
   },
   "latency": {
-    "p50_ms": 0.91,
+    "runs": 3,
+    "p50_ms": 0.93,
     "p95_ms": 1.0,
-    "mean_ms": 0.91
+    "spread_p50_ms": [
+      0.93,
+      0.93,
+      0.92
+    ]
   },
   "response_size": {
     "note_count": 20,

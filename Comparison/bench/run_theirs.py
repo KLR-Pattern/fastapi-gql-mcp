@@ -89,31 +89,42 @@ async def main() -> dict:
     mcp = FastApiMCP(app)
 
     print("== composition ==")
-    async with session(mcp.server) as sess:
-        times = []
-        for _ in range(50):
-            t0 = time.perf_counter()
-            await call(sess, tool_name(mcp, "list_notes"), {"q": "note 1"})
-            await call(sess, tool_name(mcp, "stats"), {})
-            times.append((time.perf_counter() - t0) * 1000)
+    run_means = []
+    for _ in range(3):
+        async with session(mcp.server) as sess:
+            times = []
+            for _ in range(50):
+                t0 = time.perf_counter()
+                await call(sess, tool_name(mcp, "list_notes"), {"q": "note 1"})
+                await call(sess, tool_name(mcp, "stats"), {})
+                times.append((time.perf_counter() - t0) * 1000)
+        run_means.append(round(statistics.mean(times), 2))
     results["composition"] = {
         "tool_calls": 2,
-        "mean_ms": round(statistics.mean(times), 2),
-        "p95_ms": round(pct(sorted(times), 0.95), 2),
+        "runs": 3,
+        "mean_ms_per_run": run_means,
+        "mean_ms": round(statistics.median(run_means), 2),
     }
 
     print("== latency ==")
-    async with session(mcp.server) as sess:
-        times = []
-        for _ in range(200):
-            t0 = time.perf_counter()
-            await call(sess, tool_name(mcp, "list_notes"), {})
-            times.append((time.perf_counter() - t0) * 1000)
-    s = sorted(times)
+    runs = []
+    for _ in range(3):
+        async with session(mcp.server) as sess:
+            times = []
+            for _ in range(200):
+                t0 = time.perf_counter()
+                await call(sess, tool_name(mcp, "list_notes"), {})
+                times.append((time.perf_counter() - t0) * 1000)
+        runs.append(sorted(times))
+
+    def med(q):
+        return round(statistics.median(pct(r, q) for r in runs), 2)
+
     results["latency"] = {
-        "p50_ms": round(pct(s, 0.50), 2),
-        "p95_ms": round(pct(s, 0.95), 2),
-        "mean_ms": round(statistics.mean(times), 2),
+        "runs": 3,
+        "p50_ms": med(.5),
+        "p95_ms": med(.95),
+        "spread_p50_ms": [round(pct(r, .5), 2) for r in runs],
     }
 
     print("== response size ==")

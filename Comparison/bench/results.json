@@ -1,9 +1,24 @@
 {
   "method": {
-    "hardware": "macOS, Apple Silicon (this dev machine)",
+    "hardware": "Apple M3, 15.7.3",
+    "python": "3.12.11",
     "date": "2026-10-04",
-    "catalog": "JSON bytes of the tools/list payload; tokens = bytes/4",
-    "latency": "in-memory MCP sessions, 200 iters (50 for composition)",
+    "versions": {
+      "ours": {
+        "fastapi-gql-mcp": "0.4.0",
+        "fastmcp": "4.0.10",
+        "mcp": "2.3.0",
+        "graphql-core": "3.3.0",
+        "fastapi": "0.142.2"
+      },
+      "theirs": {
+        "fastapi-mcp": "0.4.0 (clone @ e5cad13, v0.4.0+3 docs-only)",
+        "mcp": "1.30.0",
+        "fastapi": "0.142.2"
+      }
+    },
+    "catalog": "JSON bytes of the tools/list payload (full model_dump both sides); tokens = bytes/4",
+    "latency": "in-memory MCP sessions, 200 iters x 3 runs, medians reported; ours quoted from the raw mcp-SDK client variant (same stack as theirs); fastmcp-client variant recorded separately",
     "envs": "two separate venvs — fastmcp 4 requires mcp>=2, fastapi-mcp 0.4.0 breaks on mcp 2.x (Server signature change)"
   },
   "catalog": [
@@ -17,21 +32,21 @@
       },
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 1937,
+        "catalog_bytes": 2324,
         "sdl_bytes": 1249,
-        "full_context_bytes": 3186,
-        "full_context_tokens": 796,
-        "catalog_tokens": 484
+        "full_context_bytes": 3573,
+        "full_context_tokens": 893,
+        "catalog_tokens": 581
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 2744,
+        "catalog_bytes": 3523,
         "discovery_domains_bytes": 267,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 4956,
-        "discovery_total_tokens": 1239,
-        "catalog_tokens": 686
+        "discovery_total_bytes": 5735,
+        "discovery_total_tokens": 1433,
+        "catalog_tokens": 880
       }
     },
     {
@@ -44,21 +59,21 @@
       },
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 1937,
+        "catalog_bytes": 2324,
         "sdl_bytes": 1838,
-        "full_context_bytes": 3775,
-        "full_context_tokens": 943,
-        "catalog_tokens": 484
+        "full_context_bytes": 4162,
+        "full_context_tokens": 1040,
+        "catalog_tokens": 581
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 2744,
+        "catalog_bytes": 3523,
         "discovery_domains_bytes": 434,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5123,
-        "discovery_total_tokens": 1280,
-        "catalog_tokens": 686
+        "discovery_total_bytes": 5902,
+        "discovery_total_tokens": 1475,
+        "catalog_tokens": 880
       }
     },
     {
@@ -71,21 +86,21 @@
       },
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 1937,
+        "catalog_bytes": 2324,
         "sdl_bytes": 2788,
-        "full_context_bytes": 4725,
-        "full_context_tokens": 1181,
-        "catalog_tokens": 484
+        "full_context_bytes": 5112,
+        "full_context_tokens": 1278,
+        "catalog_tokens": 581
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 2744,
+        "catalog_bytes": 3523,
         "discovery_domains_bytes": 435,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5124,
-        "discovery_total_tokens": 1281,
-        "catalog_tokens": 686
+        "discovery_total_bytes": 5903,
+        "discovery_total_tokens": 1475,
+        "catalog_tokens": 880
       }
     },
     {
@@ -98,21 +113,21 @@
       },
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 1937,
+        "catalog_bytes": 2324,
         "sdl_bytes": 4388,
-        "full_context_bytes": 6325,
-        "full_context_tokens": 1581,
-        "catalog_tokens": 484
+        "full_context_bytes": 6712,
+        "full_context_tokens": 1678,
+        "catalog_tokens": 581
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 2744,
+        "catalog_bytes": 3523,
         "discovery_domains_bytes": 436,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5125,
-        "discovery_total_tokens": 1281,
-        "catalog_tokens": 686
+        "discovery_total_bytes": 5904,
+        "discovery_total_tokens": 1476,
+        "catalog_tokens": 880
       }
     },
     {
@@ -125,46 +140,80 @@
       },
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 1937,
+        "catalog_bytes": 2324,
         "sdl_bytes": 7588,
-        "full_context_bytes": 9525,
-        "full_context_tokens": 2381,
-        "catalog_tokens": 484
+        "full_context_bytes": 9912,
+        "full_context_tokens": 2478,
+        "catalog_tokens": 581
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 2744,
+        "catalog_bytes": 3523,
         "discovery_domains_bytes": 436,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5125,
-        "discovery_total_tokens": 1281,
-        "catalog_tokens": 686
+        "discovery_total_bytes": 5904,
+        "discovery_total_tokens": 1476,
+        "catalog_tokens": 880
       }
     }
   ],
   "composition": {
     "ours": {
       "tool_calls": 1,
-      "mean_ms": 2.01,
-      "p95_ms": 2.61
+      "runs": 3,
+      "mean_ms_per_run": [
+        1.88,
+        1.77,
+        1.81
+      ],
+      "mean_ms": 1.81,
+      "p95_ms": null
     },
     "theirs": {
       "tool_calls": 2,
-      "mean_ms": 1.42,
-      "p95_ms": 1.47
+      "runs": 3,
+      "mean_ms_per_run": [
+        1.44,
+        1.41,
+        1.39
+      ],
+      "mean_ms": 1.41
     }
   },
   "latency": {
     "ours": {
-      "p50_ms": 1.36,
-      "p95_ms": 1.93,
-      "mean_ms": 1.42
+      "runs": 3,
+      "ours_fastmcp_client": {
+        "p50_ms": 1.39,
+        "p95_ms": 1.93
+      },
+      "ours_raw_sdk_client": {
+        "p50_ms": 1.25,
+        "p95_ms": 1.79
+      },
+      "spread_p50_ms": {
+        "fastmcp": [
+          1.38,
+          1.39,
+          1.39
+        ],
+        "raw_sdk": [
+          1.25,
+          1.24,
+          1.26
+        ]
+      }
     },
     "theirs": {
-      "p50_ms": 0.91,
+      "runs": 3,
+      "p50_ms": 0.93,
       "p95_ms": 1.0,
-      "mean_ms": 0.91
+      "spread_p50_ms": [
+        0.93,
+        0.93,
+        0.92
+      ]
     }
   },
   "response_size": {

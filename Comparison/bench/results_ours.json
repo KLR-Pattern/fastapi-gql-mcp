@@ -4,97 +4,121 @@
       "routes": 5,
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 1937,
+        "catalog_bytes": 2324,
         "sdl_bytes": 1249,
-        "full_context_bytes": 3186
+        "full_context_bytes": 3573
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 2744,
+        "catalog_bytes": 3523,
         "discovery_domains_bytes": 267,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 4956
+        "discovery_total_bytes": 5735
       }
     },
     {
       "routes": 10,
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 1937,
+        "catalog_bytes": 2324,
         "sdl_bytes": 1838,
-        "full_context_bytes": 3775
+        "full_context_bytes": 4162
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 2744,
+        "catalog_bytes": 3523,
         "discovery_domains_bytes": 434,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5123
+        "discovery_total_bytes": 5902
       }
     },
     {
       "routes": 25,
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 1937,
+        "catalog_bytes": 2324,
         "sdl_bytes": 2788,
-        "full_context_bytes": 4725
+        "full_context_bytes": 5112
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 2744,
+        "catalog_bytes": 3523,
         "discovery_domains_bytes": 435,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5124
+        "discovery_total_bytes": 5903
       }
     },
     {
       "routes": 50,
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 1937,
+        "catalog_bytes": 2324,
         "sdl_bytes": 4388,
-        "full_context_bytes": 6325
+        "full_context_bytes": 6712
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 2744,
+        "catalog_bytes": 3523,
         "discovery_domains_bytes": 436,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5125
+        "discovery_total_bytes": 5904
       }
     },
     {
       "routes": 100,
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 1937,
+        "catalog_bytes": 2324,
         "sdl_bytes": 7588,
-        "full_context_bytes": 9525
+        "full_context_bytes": 9912
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 2744,
+        "catalog_bytes": 3523,
         "discovery_domains_bytes": 436,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5125
+        "discovery_total_bytes": 5904
       }
     }
   ],
   "composition": {
     "tool_calls": 1,
-    "mean_ms": 2.01,
-    "p95_ms": 2.61
+    "runs": 3,
+    "mean_ms_per_run": [
+      1.88,
+      1.77,
+      1.81
+    ],
+    "mean_ms": 1.81,
+    "p95_ms": null
   },
   "latency": {
-    "p50_ms": 1.36,
-    "p95_ms": 1.93,
-    "mean_ms": 1.42
+    "runs": 3,
+    "ours_fastmcp_client": {
+      "p50_ms": 1.39,
+      "p95_ms": 1.93
+    },
+    "ours_raw_sdk_client": {
+      "p50_ms": 1.25,
+      "p95_ms": 1.79
+    },
+    "spread_p50_ms": {
+      "fastmcp": [
+        1.38,
+        1.39,
+        1.39
+      ],
+      "raw_sdk": [
+        1.25,
+        1.24,
+        1.26
+      ]
+    }
   },
   "response_size": {
     "note_count": 20,

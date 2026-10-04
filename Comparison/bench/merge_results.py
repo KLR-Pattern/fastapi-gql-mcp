@@ -19,12 +19,39 @@ def main() -> None:
     ours = json.loads((HERE / "results_ours.json").read_text())
     theirs = json.loads((HERE / "results_theirs.json").read_text())
 
+    import platform
+    import subprocess
+
+    def pkg(name, project):
+        import importlib.metadata as md
+        try:
+            return md.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            return "n/a"
+
+    cpu = subprocess.run(
+        ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True
+    ).stdout.strip()
+    theirs_commit = subprocess.run(
+        ["git", "-C", str(HERE.parent.parent.parent / "fastapi-mcp"), "rev-parse", "--short", "HEAD"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+
     results = {
         "method": {
-            "hardware": "macOS, Apple Silicon (this dev machine)",
+            "hardware": f"{cpu}, {platform.mac_ver()[0]}",
+            "python": "3.12.11",
             "date": "2026-10-04",
-            "catalog": "JSON bytes of the tools/list payload; tokens = bytes/4",
-            "latency": "in-memory MCP sessions, 200 iters (50 for composition)",
+            "versions": {
+                "ours": {"fastapi-gql-mcp": "0.4.0", "fastmcp": "4.0.10",
+                          "mcp": "2.3.0", "graphql-core": "3.3.0", "fastapi": "0.142.2"},
+                "theirs": {"fastapi-mcp": f"0.4.0 (clone @ {theirs_commit}, v0.4.0+3 docs-only)",
+                            "mcp": "1.30.0", "fastapi": "0.142.2"},
+            },
+            "catalog": "JSON bytes of the tools/list payload (full model_dump both sides); tokens = bytes/4",
+            "latency": "in-memory MCP sessions, 200 iters x 3 runs, medians reported; "
+            "ours quoted from the raw mcp-SDK client variant (same stack as theirs); "
+            "fastmcp-client variant recorded separately",
             "envs": "two separate venvs — fastmcp 4 requires mcp>=2, "
             "fastapi-mcp 0.4.0 breaks on mcp 2.x (Server signature change)",
         },
