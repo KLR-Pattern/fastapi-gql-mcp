@@ -1,6 +1,6 @@
 # Why fastapi-gql-mcp
 
-### Turn your FastAPI application into an agent-friendly, context-efficient MCP server
+### Turn FastAPI into an agent-friendly, context-efficient MCP server
 
 **fastapi-gql-mcp turns any FastAPI app into an MCP server backed by a GraphQL schema — with zero changes to your code.** An agent gets 2–6 constant tools instead of one tool per endpoint, composes any routes into a single query, and runs as the caller with the caller's own credentials.
 
