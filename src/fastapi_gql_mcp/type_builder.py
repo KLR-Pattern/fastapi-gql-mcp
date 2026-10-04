@@ -18,9 +18,19 @@ from __future__ import annotations
 import inspect
 import logging
 import re
+import sys
 import types
 from enum import Enum
-from typing import Any, Literal, Union, cast, get_args, get_origin
+from typing import (
+    Annotated,
+    Any,
+    ForwardRef,
+    Literal,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+)
 
 from graphql import (
     GraphQLBoolean,
@@ -162,6 +172,79 @@ def _field_description(field: FieldInfo, annotation: Any) -> str | None:
     return "\n\n".join(parts) if parts else None
 
 
+# ------------------------------------------------------- forward-ref repair
+#
+# CPython < 3.11 leaves ``list["Node"]`` with the PLAIN STRING inside the
+# PEP 585 generic (only typing.Union converts str args to ForwardRef), and
+# every evaluator — typing's own as well as pydantic's — only evaluates
+# ForwardRef instances, so pydantic's ``FieldInfo.annotation`` stays
+# unresolved on 3.10 while 3.11+ resolves it. Rewrapping string args as
+# ForwardRef and evaluating against the model's namespaces makes recursive
+# models map identically on every supported Python.
+
+
+def _materialize_str_args(annotation: Any) -> Any:
+    """Rebuild an annotation tree with plain-string args as ForwardRef."""
+    if isinstance(annotation, str):
+        return ForwardRef(annotation)
+    args = get_args(annotation)
+    if not args:
+        return annotation
+    if get_origin(annotation) is Literal:
+        return annotation  # Literal args are VALUES (Literal["a", "b"]), not types
+    if is_annotated(annotation):
+        # args[0] is the type; the rest is metadata that is NOT a type.
+        inner = _materialize_str_args(args[0])
+        if inner is args[0]:
+            return annotation
+        merged: tuple[Any, ...] = (inner, *args[1:])  # star-free subscript (3.10)
+        return Annotated[merged]
+    new_args = tuple(_materialize_str_args(a) for a in args)
+    if new_args == args:
+        return annotation
+    origin = get_origin(annotation)
+    if origin is None:  # pragma: no cover - get_args without origin
+        return annotation
+    try:
+        return origin[new_args[0]] if len(new_args) == 1 else origin[new_args]
+    except TypeError:  # pragma: no cover - exotic origins resist rebuilding
+        return annotation
+
+
+def _model_namespace(model: type[BaseModel]) -> dict[str, Any]:
+    """The namespace a model's ForwardRefs evaluate against: the model's own
+    name (self-references — the enclosing scope binds the class name only
+    AFTER the class body runs, so neither module globals nor pydantic's
+    parent-namespace snapshot can have it yet), its module's globals
+    (module-level classes) overlaid with pydantic's captured parent frame
+    locals (function-local classes)."""
+    ns: dict[str, Any] = {model.__name__: model}
+    module = sys.modules.get(model.__module__)
+    if module is not None:
+        ns.update(vars(module))
+    parent = getattr(model, "__pydantic_parent_namespace__", None)
+    if parent:
+        ns.update(parent)
+    ns[model.__name__] = model  # self-reference wins over any same-name import
+    return ns
+
+
+def resolve_annotation(annotation: Any, namespace: dict[str, Any]) -> Any:
+    """Evaluate string/ForwardRef args; the original annotation on failure
+    (unsupported types then fail through the normal UnsupportedFieldTypeError
+    path with a precise message, instead of a resolver crash)."""
+    candidate = _materialize_str_args(annotation)
+    try:
+        from pydantic._internal._typing_extra import try_eval_type
+    except ImportError:  # pragma: no cover - pydantic internal moved/renamed
+        return candidate
+    try:
+        resolved, _ok = try_eval_type(candidate, namespace, namespace)
+    except Exception:
+        return candidate
+    return resolved
+
+
 class TypeBuilder:
     """Registry-backed converter from Pydantic annotations to graphql-core types.
 
@@ -271,6 +354,7 @@ class TypeBuilder:
 
     def _output_fields(self, model: type[BaseModel]) -> dict[str, GraphQLField]:
         fields: dict[str, GraphQLField] = {}
+        ns = _model_namespace(model)
         for field_name, info in model.model_fields.items():
             # FastAPI serializes responses by alias, so GraphQL field names must
             # match the JSON keys the resolver will actually see.
@@ -278,7 +362,7 @@ class TypeBuilder:
             if not isinstance(json_name, str):
                 json_name = field_name
             gname = sanitize_graphql_name(json_name, what=f"{model.__name__} field")
-            annotation = info.annotation
+            annotation = resolve_annotation(info.annotation, ns)
             gtype = self.output_type(annotation, context=f"{model.__name__}.{field_name}")
             fields[gname] = GraphQLField(gtype, description=_field_description(info, annotation))
         if not fields:
@@ -349,6 +433,7 @@ class TypeBuilder:
 
     def _input_fields(self, model: type[BaseModel]) -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
+        ns = _model_namespace(model)
         for field_name, info in model.model_fields.items():
             # FastAPI validates bodies against validation_alias/alias/name;
             # AliasPath/AliasChoices are too rich for a flat GraphQL name, so
@@ -357,7 +442,7 @@ class TypeBuilder:
             if not isinstance(req_name, str):
                 req_name = field_name
             gname = sanitize_graphql_name(req_name, what=f"{model.__name__} input field")
-            annotation = info.annotation
+            annotation = resolve_annotation(info.annotation, ns)
             bare = cast(
                 "GraphQLScalarType | GraphQLEnumType | GraphQLInputObjectType | GraphQLList[Any]",
                 self.input_type(annotation, context=f"{model.__name__}.{field_name}"),

@@ -26,6 +26,15 @@ def render(t) -> str:
     return str(t)
 
 
+class ModuleLevelNode(BaseModel):
+    """Recursive model at module level: ForwardRefs resolve against the
+    module's globals (function-local classes use pydantic's captured parent
+    namespace instead — see test_recursive_model)."""
+
+    value: int
+    children: list["ModuleLevelNode"] = []
+
+
 class TestScalars:
     @pytest.mark.parametrize(
         ("annotation", "expected"),
@@ -152,6 +161,14 @@ class TestObjects:
         t = TypeBuilder().output_type(Node)
         assert str(t.of_type.fields["child"].type) == "Node"
         assert str(t.of_type.fields["children"].type) == "[Node!]!"
+
+    def test_recursive_model_module_level(self):
+        t = TypeBuilder().output_type(ModuleLevelNode)
+        # children: [ModuleLevelNode!]! — NonNull(List(NonNull(obj)))
+        children = t.of_type.fields["children"].type
+        assert str(children) == "[ModuleLevelNode!]!"
+        # the recursive element IS the enclosing type object (a true cycle)
+        assert children.of_type.of_type.of_type is t.of_type
 
     def test_alias_output_field_name(self):
         class Aliased(BaseModel):

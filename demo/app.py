@@ -16,7 +16,7 @@ Feature coverage on purpose:
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Path, Query
@@ -128,7 +128,7 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        app.state.started_at = datetime.now(UTC)
+        app.state.started_at = datetime.now(timezone.utc)
         print("[demo] startup — data is in-memory, mutations live until restart")
         yield
         print("[demo] shutdown")
@@ -305,7 +305,7 @@ def create_app() -> FastAPI:
     @app.get("/now")
     async def now():
         """Untyped on purpose — fastapi-gql-mcp skips this route with a warning."""
-        return {"now": datetime.now(UTC).isoformat()}
+        return {"now": datetime.now(timezone.utc).isoformat()}
 
     return app
 

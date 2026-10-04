@@ -38,6 +38,21 @@
 
 ### Fixed
 
+- Python 3.10 support for recursive Pydantic models: CPython < 3.11 leaves
+  ``list["Node"]`` with the plain string inside the PEP 585 generic (only
+  ``typing.Union`` converts str args to ``ForwardRef``), and every evaluator
+  only evaluates ``ForwardRef`` — so ``FieldInfo.annotation`` stayed
+  unresolved and recursive models were skipped as unsupported types on 3.10
+  while working on 3.11+. The type builder now rewraps string args as
+  ``ForwardRef`` (leaving ``Literal`` values untouched — those strings are
+  values, not types) and evaluates them against the model's namespaces,
+  seeding the namespace with the model's own name (the enclosing scope binds
+  a class name only after the class body runs, so neither module globals
+  nor pydantic's parent-namespace snapshot can resolve a self-reference).
+
+- The demo app imported ``datetime.UTC`` (Python 3.11+), failing import on
+  3.10; it now uses ``timezone.utc``.
+
 - A leaf field colliding with a child domain segment inside the same group
   (e.g. a `catalog` endpoint tagged `shop` plus routes tagged
   `shop:catalog`) was silently dropped: the child group field overwrote
