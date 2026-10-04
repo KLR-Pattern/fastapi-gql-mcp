@@ -68,6 +68,11 @@ class RouterMCP:
             concurrently, so one wide query fans out; this protects the
             wrapped app's upstream from being hammered by its own bridge.
             Queueing for a slot counts against ``request_timeout``.
+        max_depth: Maximum GraphQL selection-set nesting accepted per
+            document (default 10, ``None`` disables). Recursive models make
+            depth unbounded, and an MCP caller is an LLM that can emit
+            runaway nesting — overly deep documents are rejected before
+            execution with a validation-style error.
         auth: Optional ``fastmcp`` auth provider (e.g.
             ``fastmcp.server.auth.providers.github.GitHubProvider``). Passed
             through to ``FastMCP`` untouched: the MCP endpoint then answers
@@ -99,6 +104,7 @@ class RouterMCP:
         auth: Any | None = None,
         request_timeout: float | None = 30.0,
         max_concurrency: int | None = 16,
+        max_depth: int | None = 10,
     ) -> None:
         self._mode = mode
         self._progressive_threshold = progressive_threshold
@@ -112,6 +118,7 @@ class RouterMCP:
             passthrough_headers=passthrough_headers,
             request_timeout=request_timeout,
             max_concurrency=max_concurrency,
+            max_depth=max_depth,
         )
         self._resolved_mode = self._resolve_mode(mode)
         self._domains = DomainRegistry(self._handler.routes)

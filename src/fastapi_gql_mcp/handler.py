@@ -11,6 +11,7 @@ from typing import Any
 
 from graphql import GraphQLSchema, graphql, print_schema
 
+from fastapi_gql_mcp.depth_guard import depth_error
 from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
 from fastapi_gql_mcp.scanner import RouteInfo, RouterScanner, SkipRecord
 from fastapi_gql_mcp.schema_builder import GQLMCPConfigError, SchemaBuilder
@@ -32,10 +33,16 @@ class RouterGraphQLHandler:
         passthrough_headers: Sequence[str] | None = None,
         request_timeout: float | None = 30.0,
         max_concurrency: int | None = 16,
+        max_depth: int | None = 10,
+        validation_rules: Sequence[Any] | None = None,
     ) -> None:
+        if max_depth is not None and max_depth < 1:
+            raise ValueError("max_depth must be >= 1, or None to disable")
         self._invoker = RouteInvoker(
             app, timeout=request_timeout, max_concurrency=max_concurrency
         )
+        self._max_depth = max_depth
+        self._validation_rules = tuple(validation_rules) if validation_rules else ()
         # Whitelist of inbound header names untrusted callers may forward into
         # route calls, lowercased at construction. None = the default
         # ("authorization",): same-app bridges speak for the caller, so the
@@ -113,6 +120,10 @@ class RouterGraphQLHandler:
         from an untrusted origin (MCP request, /graphql endpoint) must filter
         them through ``filter_passthrough_headers`` first.
         """
+        if self._max_depth is not None:
+            error = depth_error(query, self._max_depth)
+            if error is not None:
+                return {"errors": [error.formatted]}
         await self._invoker.start()
         result = await graphql(
             self._schema,
@@ -120,6 +131,7 @@ class RouterGraphQLHandler:
             variable_values=variables or {},
             operation_name=operation_name,
             context_value=InvocationContext(headers=headers),
+            rules=self._validation_rules or None,
         )
         payload: dict[str, Any] = {}
         if result.data is not None:

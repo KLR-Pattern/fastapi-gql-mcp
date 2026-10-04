@@ -206,6 +206,44 @@ FastAPI `Depends` on the mounted route) — the bridge authenticates no one
 itself, and combine with `allow_mutation=False` / `mutation_include` to keep
 writes out of reach.
 
+## Hardening the bridge
+
+Two knobs are built in and on by default:
+
+- **`max_depth`** (default 10, `None` disables) — maximum selection-set
+  nesting per document. Recursive models make depth unbounded and an MCP
+  caller is an LLM that can emit runaway nesting; overly deep documents are
+  rejected with a validation-style error before anything executes.
+- **`max_concurrency`** (default 16, `None` disables) — bound on in-flight
+  route calls across all queries. Sibling fields resolve concurrently, so
+  one wide query fans out; this protects the wrapped app's upstream from
+  being hammered by its own bridge (queueing counts against
+  `request_timeout`, default 30s).
+
+Both (plus `request_timeout`) are parameters of `RouterGraphQLHandler` and
+`RouterMCP`. For anything policy-shaped, `validation_rules=` on the handler
+passes extra graphql-core validation rules through.
+
+For rate limiting and response caps on the **MCP face**, FastMCP's
+middleware suite attaches with zero bridge code — `RouterMCP.mcp` is the
+underlying `FastMCP` instance:
+
+```python
+from fastmcp.server.middleware.rate_limiting import RateLimitingMiddleware
+from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
+
+mcp = RouterMCP(app)
+mcp.mcp.add_middleware(RateLimitingMiddleware(max_requests_per_second=10))
+mcp.mcp.add_middleware(ResponseLimitingMiddleware(max_size=1_000_000))
+```
+
+`RateLimitingMiddleware` limits **per client** by default (pass
+`get_client_id=` to customize the key or `global_limit=True` for a shared
+bucket); `ResponseLimitingMiddleware` truncates oversized tool responses
+(default 1 MB, configurable suffix). The `POST /graphql` face does not go
+through fastmcp — attach your own middleware to the host app for that
+endpoint.
+
 ## Demo
 
 The `demo/` directory runs a small shop app (users / catalog / orders / stats,

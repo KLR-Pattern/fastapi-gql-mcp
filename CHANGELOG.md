@@ -4,6 +4,19 @@
 
 ### Added
 
+- **`max_depth` (default 10, `None` disables)** on
+  `RouterGraphQLHandler` / `RouterMCP`: recursive models make selection-set
+  nesting unbounded and an MCP caller is an LLM that can emit runaway
+  documents — overly deep ones are now rejected before execution with a
+  validation-style error. Fragment spreads resolve inline (spreading a
+  deep query across fragments cannot hide it; cyclic spreads are
+  rejected), inline fragments are transparent, and the root selection set
+  counts as depth 1. `validation_rules=` on the handler passes extra
+  graphql-core validation rules through to `graphql()` for anything
+  policy-shaped. README gained a "Hardening the bridge" section covering
+  these knobs plus the fastmcp rate-limiting / response-limiting
+  middleware (per-client by default) for the MCP face.
+
 - **`max_concurrency` (default 16, `None` disables)** on
   `RouterGraphQLHandler` / `RouterMCP`: a bound on in-flight route calls
   across all queries. Sibling GraphQL fields resolve concurrently, so one
