@@ -1,0 +1,103 @@
+name: Test
+
+on:
+  pull_request:
+    paths:
+      - 'src/fastapi_gql_mcp/**'
+      - 'tests/**'
+      - 'demo/**'
+      - 'examples/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  push:
+    branches: [master]
+    paths:
+      - 'src/fastapi_gql_mcp/**'
+      - 'tests/**'
+      - 'demo/**'
+      - 'examples/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run linter
+        run: uv run ruff check src tests
+
+      - name: Run type checker
+        run: uv run mypy src
+
+      - name: Test with pytest
+        run: uv run pytest tests/ -v
+
+  # Guards the demo (and examples' syntax) against framework API drift. The
+  # demo is the framework's first real consumer; if a public API is renamed or
+  # removed, this job fails on the PR instead of shipping a demo that only
+  # breaks at run time. Critical: uv sync installs the WORKING-COPY framework
+  # (editable), so the demo is verified against the code in this PR — not the
+  # PyPI release. examples/notes_oauth is a standalone project with its own
+  # dependency set, so it is guarded here by compileall (syntax) and by
+  # tests/test_example_public_api.py in the test job (public-API-only imports).
+  demo-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install working-copy framework + extras
+        run: uv sync --all-extras
+
+      - name: Demo app builds against working-copy framework
+        run: |
+          uv run python -c "import demo.app; print(f'demo builds: {len(demo.app.app.routes)} routes')"
+
+      - name: Compile all example sources
+        run: uv run python -m compileall -q examples
+
+  # Single required-status gate. Branch protection should require this ONE
+  # check ("CI All Green") instead of each job (the matrix makes per-job names
+  # awkward). It aggregates the real jobs and fails if any did not succeed.
+  # A mirror job of the same name lives in ci-skip.yml: when a PR touches no
+  # code paths this workflow is skipped entirely, so the mirror reports the
+  # same check as green and docs-only PRs are never blocked on a check that
+  # path filtering skipped.
+  ci-all-green:
+    name: CI All Green
+    if: always()
+    needs: [test, demo-guard]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required jobs succeeded
+        run: |
+          echo "test=${{ needs.test.result }} demo-guard=${{ needs.demo-guard.result }}"
+          [ "${{ needs.test.result }}" = "success" ] && [ "${{ needs.demo-guard.result }}" = "success" ]

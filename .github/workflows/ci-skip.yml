@@ -1,0 +1,26 @@
+# Companion to ci.yml. The real CI is path-filtered, so a PR that changes
+# only non-code files (README, CHANGELOG, Comparison, etc.) skips ci.yml
+# entirely — leaving the required "CI All Green" check stuck in "Expected"
+# forever and blocking the PR. This workflow runs on the INVERSE path filter
+# and reports the same "CI All Green" check as passing, so such PRs can
+# merge. On a mixed PR both workflows run; both report green, and a real
+# failure still fails the same-named check, so nothing is masked.
+name: Test
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'src/fastapi_gql_mcp/**'
+      - 'tests/**'
+      - 'demo/**'
+      - 'examples/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+
+jobs:
+  ci-all-green:
+    name: CI All Green
+    runs-on: ubuntu-latest
+    steps:
+      - name: No code paths changed
+        run: echo "No code paths changed — real CI skipped; reporting green."
