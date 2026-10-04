@@ -4,6 +4,15 @@
 
 ### Added
 
+- **`max_concurrency` (default 16, `None` disables)** on
+  `RouterGraphQLHandler` / `RouterMCP`: a bound on in-flight route calls
+  across all queries. Sibling GraphQL fields resolve concurrently, so one
+  wide query fans out into parallel ASGI calls that could hammer the
+  wrapped app's upstream (DB, external APIs); the invoker-global semaphore
+  bounds that fan-out. The slot is acquired inside the timeout window, so
+  queueing time counts against `request_timeout` — a call waiting for a
+  slot cannot outlive its own deadline.
+
 - **`request_timeout` (default 30s, `None` disables)** on
   `RouterGraphQLHandler` / `RouterMCP`, threaded to the invoker. Enforced
   with `asyncio.wait_for` and surfaced as a field-level `TIMEOUT` error

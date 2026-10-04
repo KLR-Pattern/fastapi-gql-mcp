@@ -165,10 +165,20 @@ class RouteInvoker:
         *,
         timeout: float | None = 30.0,
         manage_lifespan: bool = True,
+        max_concurrency: int | None = 16,
     ) -> None:
         self._app = app
         self._timeout = timeout
         self._manage_lifespan = manage_lifespan
+        if max_concurrency is not None and max_concurrency < 1:
+            raise ValueError("max_concurrency must be >= 1, or None to disable")
+        self._max_concurrency = max_concurrency
+        # One slot per in-flight route call across ALL queries — the wrapped
+        # app's upstream (DB, external APIs) is what needs protecting, so the
+        # bound is invoker-global, not per-document.
+        self._semaphore: asyncio.Semaphore | None = (
+            asyncio.Semaphore(max_concurrency) if max_concurrency is not None else None
+        )
         self._client: AsyncClient | None = None
         self._lifespan: LifespanManager | None = None
         self._lock = asyncio.Lock()
@@ -185,6 +195,10 @@ class RouteInvoker:
     @property
     def timeout(self) -> float | None:
         return self._timeout
+
+    @property
+    def max_concurrency(self) -> int | None:
+        return self._max_concurrency
 
     def disable_lifespan_management(self) -> None:
         """Stop managing the app lifespan (when the host server runs it)."""
@@ -241,19 +255,32 @@ class RouteInvoker:
             kwargs,
             {str(k): str(v) for k, v in extra_headers.items()} if extra_headers else None,
         )
-        # ASGITransport does NOT enforce httpx timeouts (in-process calls
-        # bypass httpcore) — asyncio.wait_for is the actual enforcement.
-        try:
-            response = await asyncio.wait_for(
-                client.request(
+        # Sibling GraphQL fields resolve concurrently, so one wide query is a
+        # fan-out of route calls. The semaphore bounds that fan-out; it is
+        # acquired INSIDE the timeout so queueing time counts against it (a
+        # call stuck waiting for a slot must not outlive its own deadline).
+        async def call() -> Response:
+            if self._semaphore is None:
+                return await client.request(
                     plan.method,
                     plan.path,
                     params=list(plan.params),
                     json=plan.json_body,
                     headers=plan.headers,
-                ),
-                timeout=self._timeout,
-            )
+                )
+            async with self._semaphore:
+                return await client.request(
+                    plan.method,
+                    plan.path,
+                    params=list(plan.params),
+                    json=plan.json_body,
+                    headers=plan.headers,
+                )
+
+        # ASGITransport does NOT enforce httpx timeouts (in-process calls
+        # bypass httpcore) — asyncio.wait_for is the actual enforcement.
+        try:
+            response = await asyncio.wait_for(call(), timeout=self._timeout)
         except asyncio.TimeoutError as exc:
             raise GraphQLError(
                 f"{route.method} {route.path} timed out after {self._timeout}s",

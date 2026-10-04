@@ -278,3 +278,66 @@ class TestProtocolHeaderProtection:
         assert filter_passthrough_headers({"X-Custom": "1"}, ["x-custom"]) == {
             "x-custom": "1"
         }
+
+
+class TestConcurrencyLimits:
+    """P0-2: sibling fields fan out concurrently; max_concurrency bounds it
+    invoker-globally (the wrapped app's upstream is what needs protecting)."""
+
+    @staticmethod
+    def _fanout_app(n: int, state: dict) -> FastAPI:
+        import asyncio
+
+        from pydantic import BaseModel
+
+        class Ok(BaseModel):
+            ok: bool
+
+        app = FastAPI()
+
+        def make(i: int):
+            async def endpoint() -> Ok:
+                state["current"] += 1
+                state["peak"] = max(state["peak"], state["current"])
+                await asyncio.sleep(0.15)
+                state["current"] -= 1
+                return Ok(ok=True)
+
+            endpoint.__name__ = f"job_{i}"
+            return endpoint
+
+        for i in range(n):
+            app.get(f"/job{i}", response_model=Ok, tags=["jobs"])(make(i))
+        return app
+
+    @staticmethod
+    def _query(n: int) -> str:
+        fields = " ".join(f"job_{i} {{ ok }}" for i in range(n))
+        return f"{{ jobs {{ {fields} }} }}"
+
+    async def test_fanout_bounded_by_max_concurrency(self):
+        from fastapi_gql_mcp.handler import RouterGraphQLHandler
+
+        state = {"current": 0, "peak": 0}
+        handler = RouterGraphQLHandler(self._fanout_app(4, state), max_concurrency=2)
+        assert handler.invoker.max_concurrency == 2
+        result = await handler.execute(self._query(4))
+        assert result["data"]["jobs"]["job_3"] == {"ok": True}
+        assert state["peak"] <= 2, f"fan-out exceeded the bound: {state}"
+        await handler.aclose()
+
+    async def test_unbounded_runs_in_parallel(self):
+        from fastapi_gql_mcp.handler import RouterGraphQLHandler
+
+        state = {"current": 0, "peak": 0}
+        handler = RouterGraphQLHandler(self._fanout_app(4, state), max_concurrency=None)
+        result = await handler.execute(self._query(4))
+        assert result["data"]["jobs"]["job_0"] == {"ok": True}
+        assert state["peak"] >= 2, "sibling fields should resolve concurrently"
+        await handler.aclose()
+
+    def test_invalid_max_concurrency_rejected(self):
+        from fastapi_gql_mcp.handler import RouterGraphQLHandler
+
+        with pytest.raises(ValueError, match="max_concurrency"):
+            RouterGraphQLHandler(self._fanout_app(1, {}), max_concurrency=0)

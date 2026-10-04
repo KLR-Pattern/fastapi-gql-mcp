@@ -31,8 +31,11 @@ class RouterGraphQLHandler:
         mutation_include: Sequence[str] | None = None,
         passthrough_headers: Sequence[str] | None = None,
         request_timeout: float | None = 30.0,
+        max_concurrency: int | None = 16,
     ) -> None:
-        self._invoker = RouteInvoker(app, timeout=request_timeout)
+        self._invoker = RouteInvoker(
+            app, timeout=request_timeout, max_concurrency=max_concurrency
+        )
         # Whitelist of inbound header names untrusted callers may forward into
         # route calls, lowercased at construction. None = the default
         # ("authorization",): same-app bridges speak for the caller, so the

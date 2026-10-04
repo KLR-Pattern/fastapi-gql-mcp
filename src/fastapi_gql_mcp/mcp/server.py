@@ -63,6 +63,11 @@ class RouterMCP:
         request_timeout: Per-route-call timeout in seconds (default 30,
             ``None`` disables). Enforced with asyncio.wait_for — httpx's
             own timeout is inert on the in-process ASGI transport.
+        max_concurrency: Bound on in-flight route calls across all queries
+            (default 16, ``None`` disables). Sibling GraphQL fields resolve
+            concurrently, so one wide query fans out; this protects the
+            wrapped app's upstream from being hammered by its own bridge.
+            Queueing for a slot counts against ``request_timeout``.
         auth: Optional ``fastmcp`` auth provider (e.g.
             ``fastmcp.server.auth.providers.github.GitHubProvider``). Passed
             through to ``FastMCP`` untouched: the MCP endpoint then answers
@@ -93,6 +98,7 @@ class RouterMCP:
         passthrough_headers: Sequence[str] | None = None,
         auth: Any | None = None,
         request_timeout: float | None = 30.0,
+        max_concurrency: int | None = 16,
     ) -> None:
         self._mode = mode
         self._progressive_threshold = progressive_threshold
@@ -105,6 +111,7 @@ class RouterMCP:
             mutation_include=mutation_include,
             passthrough_headers=passthrough_headers,
             request_timeout=request_timeout,
+            max_concurrency=max_concurrency,
         )
         self._resolved_mode = self._resolve_mode(mode)
         self._domains = DomainRegistry(self._handler.routes)
