@@ -15,6 +15,11 @@ mcp = RouterMCP(app, name="my-app")
 mcp.run()  # HTTP MCP server with get_schema + graphql_query tools
 ```
 
+**Contents** — [Why](#why) · [How it works](#how-it-works) ·
+[Installation](#installation) · [Usage](#usage) · [Authentication](#authentication) ·
+[Observability](#observability-opentelemetry) · [Hardening](#hardening-the-bridge) ·
+[Demo](#demo) · [Development](#development) · [Status](#status)
+
 ## Why
 
 Existing FastAPI→MCP bridges map **one tool per endpoint**: dozens of tools, no
@@ -35,16 +40,14 @@ agents get:
 
 ### Compared to the alternatives
 
-The other FastAPI→MCP bridges map endpoints to tools one-to-one. fastapi-gql-mcp
-instead derives a GraphQL schema from your routes — GraphQL is the
-implementation vehicle, the contract the agent sees: few constant tools,
-field-level selection and cross-endpoint composition for free.
-
 | Project | Tool count | Field selection | Composition | Setup |
 |---|---|---|---|---|
 | [fastapi-mcp](https://github.com/tadata-org/fastapi_mcp) (Tadata) | one per endpoint | ✗ | ✗ | none |
 | [FastMCP.from_openapi](https://gofastmcp.com/servers/openapi) | one per endpoint | ✗ | ✗ | none |
 | **fastapi-gql-mcp** | 2-6, constant | ✓ | ✓ | none |
+
+Full head-to-head — context-growth curves, latency, auth models, selection
+guidance, all measured on one shared app: [Comparison](./Comparison/README.md).
 
 ## How it works
 
@@ -104,8 +107,13 @@ Rules worth knowing:
   writes in DIFFERENT domains are ordered; writes grouped under the SAME
   domain run in parallel like query fields. When write order matters, put the
   operations in separate domains or send separate mutation documents.
-- Untyped routes (no `response_model`/return annotation, raw `Response`,
-  hidden routes, required header/cookie params) are **skipped with a warning**.
+- **Dynamic shapes pass through as `JSON`** — endpoints and fields annotated
+  `dict`, `dict[K, V]` or `Any` bridge as the `JSON` scalar instead of being
+  skipped (both directions: a `JSON` argument lands as the raw request body).
+  Routes with NO annotation and no `response_model`, raw `Response` returns,
+  hidden routes and required header/cookie params are still **skipped with a
+  warning** — `handler.skips` lists them programmatically, so CI can assert
+  nothing fell out of the schema unnoticed.
 - `include`/`exclude` fnmatch globs scope which routes enter the schema.
 - Route tags form a **domain tree** (`tags=["billing:invoice"]`); large apps
   switch to **progressive disclosure** (below).
@@ -119,6 +127,8 @@ Rules worth knowing:
   in GraphiQL hover, introspection and every MCP discovery tool.
 
 ## Installation
+
+Requires Python >= 3.10.
 
 ```bash
 uv add fastapi-gql-mcp            # core: GraphQL handler
@@ -143,7 +153,7 @@ mcp = RouterMCP(
     # an empty list disables forwarding entirely.
     # passthrough_headers=["authorization"],
 )
-mcp.run()
+mcp.run()  # streamable HTTP, 127.0.0.1:8000 — mcp.run(host="0.0.0.0", port=9000)
 ```
 
 ### Progressive disclosure (large apps)
@@ -200,6 +210,15 @@ verifiers, and this bridge never holds or manages tokens of its own.
 - **Machines without a user context** configure the service credential on the
   MCP client side (or, for programmatic use, pass
   `handler.execute(..., headers={...})` directly).
+- **MCP endpoint OAuth (optional)**: pass a fastmcp auth provider —
+  `auth=GitHubProvider(client_id=..., client_secret=..., base_url=...)` — and
+  the MCP endpoint speaks OAuth 2.1: 401 discovery, dynamic client
+  registration, PKCE, a consent page, and its own reference tokens verifying
+  every call. Claude Code opens a browser, the user logs in, and the agent's
+  queries run as that user. `mount_to(app, "/mcp", auth_at_root=True)` hosts
+  the OAuth routes at the app root (for reusing an IdP app whose registered
+  callback lives there). The bridge itself still verifies nothing. Full
+  wired flow: [examples/notes_oauth](./examples/notes_oauth/).
 
 Expose the MCP endpoint only behind an entrance you control (network, or a
 FastAPI `Depends` on the mounted route) — the bridge authenticates no one
@@ -231,8 +250,12 @@ derive them from spans with an OTel Collector `spanmetrics` connector.
 
 ## Hardening the bridge
 
-Two knobs are built in and on by default:
+Three knobs are built in and on by default:
 
+- **`request_timeout`** (default 30s, `None` disables) — per-route-call
+  deadline. The in-process ASGI call bypasses httpx's own timeout machinery,
+  so enforcement lives in `asyncio.wait_for`; a timed-out field surfaces as a
+  `TIMEOUT` error (http_status 504) while its siblings survive.
 - **`max_depth`** (default 10, `None` disables) — maximum selection-set
   nesting per document. Recursive models make depth unbounded and an MCP
   caller is an LLM that can emit runaway nesting; overly deep documents are
@@ -243,8 +266,7 @@ Two knobs are built in and on by default:
   being hammered by its own bridge (queueing counts against
   `request_timeout`, default 30s).
 
-Both (plus `request_timeout`) are parameters of `RouterGraphQLHandler` and
-`RouterMCP`. For anything policy-shaped, `validation_rules=` on the handler
+All three are parameters of `RouterGraphQLHandler` and `RouterMCP`. For anything policy-shaped, `validation_rules=` on the handler
 passes extra graphql-core validation rules through.
 
 For rate limiting and response caps on the **MCP face**, FastMCP's
@@ -287,7 +309,8 @@ session cookies, and MCP OAuth (Claude Code's browser login flow)** — see
 [`examples/notes_oauth`](./examples/notes_oauth/): three interchangeable
 credential carriers resolved in one place, the MCP endpoint protected by
 an OAuth 2.1 proxy, and a smoke script that walks the protected paths
-headlessly.
+headlessly. For observability, [examples/otel_smoke.md](./examples/otel_smoke.md)
+walks the one-waterfall-per-query proof in Jaeger.
 
 ## Development
 
@@ -299,7 +322,7 @@ uv run mypy src
 
 ## Status
 
-0.3.0 — see [CHANGELOG.md](CHANGELOG.md). Ideas welcome: GraphQL subscriptions
+0.4.0 — see [CHANGELOG.md](CHANGELOG.md). Ideas welcome: GraphQL subscriptions
 over SSE routes, response header pass-through, per-domain auth scopes.
 
 Design extracted from [nexusx](https://github.com/KLR-Pattern/nexusx)
