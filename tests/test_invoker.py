@@ -215,3 +215,66 @@ class TestPathConvertorRoutes:
         with pytest.raises(GraphQLError) as exc:
             await self._invoke("/conv/{item_id:int}", {"item_id": -1})
         assert exc.value.extensions["code"] == "BAD_REQUEST"
+
+
+class TestTimeoutEnforcement:
+    """R1: httpx timeouts are INERT on ASGITransport — asyncio.wait_for in
+    invoke() is the real enforcement, wired through request_timeout."""
+
+    @staticmethod
+    def _slow_app(seconds: float) -> FastAPI:
+        import asyncio
+
+        from pydantic import BaseModel
+
+        class Ok(BaseModel):
+            ok: bool
+
+        app = FastAPI()
+
+        @app.get("/slow", response_model=Ok)
+        async def slow() -> Ok:
+            await asyncio.sleep(seconds)
+            return Ok(ok=True)
+
+        return app
+
+    async def test_slow_route_times_out(self):
+        from fastapi_gql_mcp.handler import RouterGraphQLHandler
+
+        handler = RouterGraphQLHandler(self._slow_app(0.5), request_timeout=0.05)
+        assert handler.invoker.timeout == 0.05
+        result = await handler.execute("{ slow { slow { ok } } }")
+        assert "errors" in result
+        assert "timed out after 0.05s" in result["errors"][0]["message"]
+        assert result["errors"][0]["extensions"]["code"] == "TIMEOUT"
+        await handler.aclose()
+
+    async def test_none_disables_enforcement(self):
+        from fastapi_gql_mcp.handler import RouterGraphQLHandler
+
+        handler = RouterGraphQLHandler(self._slow_app(0.2), request_timeout=None)
+        result = await handler.execute("{ slow { slow { ok } } }")
+        assert result == {"data": {"slow": {"slow": {"ok": True}}}}
+        await handler.aclose()
+
+
+class TestProtocolHeaderProtection:
+    """R4: content-type/accept are refused even when whitelisted — a
+    forwarded value would retype the JSON body request into a 422."""
+
+    def test_protocol_headers_never_forwarded(self):
+        from fastapi_gql_mcp.invoker import filter_passthrough_headers
+
+        filtered = filter_passthrough_headers(
+            {"Content-Type": "text/plain", "Accept": "*/*", "Authorization": "Bearer x"},
+            ["content-type", "accept", "authorization"],
+        )
+        assert filtered == {"authorization": "Bearer x"}
+
+    def test_custom_headers_still_forwarded(self):
+        from fastapi_gql_mcp.invoker import filter_passthrough_headers
+
+        assert filter_passthrough_headers({"X-Custom": "1"}, ["x-custom"]) == {
+            "x-custom": "1"
+        }

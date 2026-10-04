@@ -12,7 +12,7 @@ from typing import Any
 from graphql import GraphQLSchema, graphql, print_schema
 
 from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
-from fastapi_gql_mcp.scanner import RouteInfo, RouterScanner
+from fastapi_gql_mcp.scanner import RouteInfo, RouterScanner, SkipRecord
 from fastapi_gql_mcp.schema_builder import GQLMCPConfigError, SchemaBuilder
 from fastapi_gql_mcp.type_builder import TypeBuilder
 
@@ -30,8 +30,9 @@ class RouterGraphQLHandler:
         include_hidden: bool = False,
         mutation_include: Sequence[str] | None = None,
         passthrough_headers: Sequence[str] | None = None,
+        request_timeout: float | None = 30.0,
     ) -> None:
-        self._invoker = RouteInvoker(app)
+        self._invoker = RouteInvoker(app, timeout=request_timeout)
         # Whitelist of inbound header names untrusted callers may forward into
         # route calls, lowercased at construction. None = the default
         # ("authorization",): same-app bridges speak for the caller, so the
@@ -44,7 +45,7 @@ class RouterGraphQLHandler:
                 h.strip().lower() for h in passthrough_headers if h.strip()
             )
         self._types = TypeBuilder()
-        routes, _skips = RouterScanner(
+        routes, skips = RouterScanner(
             app,
             include=include,
             exclude=exclude,
@@ -55,6 +56,7 @@ class RouterGraphQLHandler:
         self._builder = SchemaBuilder(routes, self._invoker, self._types)
         self._schema = self._builder.build()
         self._routes: list[RouteInfo] = routes
+        self._skips: list[SkipRecord] = skips
 
     @property
     def schema(self) -> GraphQLSchema:
@@ -63,6 +65,13 @@ class RouterGraphQLHandler:
     @property
     def routes(self) -> list[RouteInfo]:
         return list(self._routes)
+
+    @property
+    def skips(self) -> list[SkipRecord]:
+        """Routes excluded from the schema, with reasons — the scanner's
+        report, so callers can assert nothing disappeared unexpectedly
+        (e.g. a new endpoint silently failing to map in CI)."""
+        return list(self._skips)
 
     @property
     def invoker(self) -> RouteInvoker:

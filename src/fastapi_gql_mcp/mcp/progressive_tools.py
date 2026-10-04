@@ -166,6 +166,9 @@ def register_progressive_tools(
         )
 
     index = handler.query_fields
+    # The schema is immutable after build, so each domain's SDL fragment is
+    # computed once and reused — agents re-explore the same domain often.
+    sdl_cache: dict[tuple[str, ...], str] = {}
 
     @mcp.tool()
     def list_queries(domain: str) -> dict[str, Any]:
@@ -239,13 +242,16 @@ def register_progressive_tools(
         path = _resolve(domain)
         if path is None:
             return _unknown_domain(domain, registry)
-        sdl = _domain_sdl(schema, registry, path)
+        sdl = sdl_cache.get(path)
         if sdl is None:
-            return create_error_response(
-                f"Domain '{domain}' has no GraphQL operations.",
-                GQLMCPErrors.DOMAIN_NOT_FOUND,
-                hint="Pick a domain from list_domains that carries operations.",
-            )
+            sdl = _domain_sdl(schema, registry, path)
+            if sdl is None:
+                return create_error_response(
+                    f"Domain '{domain}' has no GraphQL operations.",
+                    GQLMCPErrors.DOMAIN_NOT_FOUND,
+                    hint="Pick a domain from list_domains that carries operations.",
+                )
+            sdl_cache[path] = sdl
         return create_success_response(
             {"sdl": sdl},
             hint="Write a GraphQL query against this fragment and run it with "

@@ -57,7 +57,12 @@ class RouterMCP:
             as its own JWT user, the FastAPI security schemes doing the
             verifying. Pass ``[]`` to disable forwarding entirely. With no
             HTTP request context (in-memory client) nothing is forwarded:
-            protected routes answer 401.
+            protected routes answer 401. Protocol headers (``content-type``
+            / ``accept``) are refused even if whitelisted — the invoker
+            owns them, and a forwarded value would retype the JSON request.
+        request_timeout: Per-route-call timeout in seconds (default 30,
+            ``None`` disables). Enforced with asyncio.wait_for — httpx's
+            own timeout is inert on the in-process ASGI transport.
         auth: Optional ``fastmcp`` auth provider (e.g.
             ``fastmcp.server.auth.providers.github.GitHubProvider``). Passed
             through to ``FastMCP`` untouched: the MCP endpoint then answers
@@ -87,6 +92,7 @@ class RouterMCP:
         mutation_include: Sequence[str] | None = None,
         passthrough_headers: Sequence[str] | None = None,
         auth: Any | None = None,
+        request_timeout: float | None = 30.0,
     ) -> None:
         self._mode = mode
         self._progressive_threshold = progressive_threshold
@@ -98,6 +104,7 @@ class RouterMCP:
             include_hidden=include_hidden,
             mutation_include=mutation_include,
             passthrough_headers=passthrough_headers,
+            request_timeout=request_timeout,
         )
         self._resolved_mode = self._resolve_mode(mode)
         self._domains = DomainRegistry(self._handler.routes)
@@ -204,13 +211,20 @@ class RouterMCP:
             # No Mount("") here: it is a catch-all, so any host route added
             # AFTER this call would silently 404 behind it. Instead, splice
             # the routes (appended last — host routes keep precedence) and
-            # copy the sub-app's whole middleware stack. The routes only
-            # CARRY the per-route guard (RequireAuthMiddleware); everything
-            # else — AuthenticationMiddleware (sets scope["user"] via
-            # verify_token) and RequestContextMiddleware (captures inbound
-            # headers so tool calls can forward them) — lives at app level
-            # and must move over, or requests 401 and per-caller headers
-            # silently stop reaching the routes.
+            # copy the sub-app's whole middleware stack.
+            #
+            # fastmcp private surface this relies on — VERIFY EACH on any
+            # fastmcp major bump (pyproject pins <5 for exactly this):
+            #   1. http_app.routes carrying a per-route RequireAuthMiddleware
+            #      guard on the MCP endpoint;
+            #   2. app-level AuthenticationMiddleware (verify_token setting
+            #      scope["user"]) on the sub-app's user_middleware stack;
+            #   3. RequestContextMiddleware (captures inbound headers so
+            #      tool calls can forward them), also from user_middleware;
+            #   4. auth.get_well_known_routes() returning re-exposable
+            #      /.well-known/* routes.
+            # Dropping any of these fails soft-but-visible: 401s, or
+            # per-caller headers silently stop reaching the routes.
             for route in http_app.routes:
                 app.router.routes.append(route)
             for middleware in getattr(http_app, "user_middleware", []):

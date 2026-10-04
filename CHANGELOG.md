@@ -4,6 +4,45 @@
 
 ### Added
 
+- **`request_timeout` (default 30s, `None` disables)** on
+  `RouterGraphQLHandler` / `RouterMCP`, threaded to the invoker. Enforced
+  with `asyncio.wait_for` and surfaced as a field-level `TIMEOUT` error
+  (http_status 504) — see Fixed below for why the httpx timeout alone
+  could never fire.
+
+- **`handler.skips`**: the scanner's skip report (path/method/reason per
+  excluded route) is now caller-visible instead of log-only — CI can
+  assert `skips == []` (or an expected set) so a route silently falling
+  out of the schema fails the build. Completes the scanner's day-one
+  "the caller decides whether skips are acceptable" contract.
+
+- GraphiQL shows an actionable offline notice (10s) when the esm.sh CDN
+  is unreachable, pointing at the raw `POST /graphql` endpoint.
+
+### Fixed
+
+- `RouteInvoker(timeout=...)` was dead configuration: httpx's
+  `ASGITransport` never enforces timeouts (in-process calls bypass
+  httpcore) — a route could hang forever regardless of the setting.
+  Enforcement now lives in `asyncio.wait_for` inside `invoke()`.
+
+- `content-type` / `accept` are refused by `filter_passthrough_headers`
+  even when whitelisted: a forwarded `content-type` would retype the JSON
+  body request (text/plain + json body → FastAPI 422). Custom headers
+  still forward as before.
+
+### Changed
+
+- Progressive disclosure caches each domain's SDL fragment (the schema is
+  immutable after build; agents re-explore the same domain often), and
+  `DomainRegistry` answers `children()` from a precomputed index instead
+  of a full node scan per `list_domains` call.
+
+- `mount_to(auth_at_root=True)` now carries an explicit checklist comment
+  of the fastmcp private surface it relies upon (per-route auth guard,
+  app-level auth/request-context middleware, well-known routes) — the
+  things to re-verify on any fastmcp major bump.
+
 - **JSON pass-through for dynamic shapes**: endpoints and fields annotated
   `dict`, `dict[K, V]`, `Any` (and `list`s / model fields thereof) bridge
   as the `JSON` scalar instead of being skipped — an author declaring a

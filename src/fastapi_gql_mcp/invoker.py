@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 
 _BASE_HEADERS: dict[str, str] = {"accept": "application/json"}
 _MAX_ERROR_BODY = 500
+# Headers the invoker owns: the bridge always speaks JSON, and a forwarded
+# value here would retype the request (content-type: text/plain + JSON body
+# -> FastAPI 422). Refused even when whitelisted.
+_PROTECTED_HEADERS = frozenset({"content-type", "accept"})
 
 
 class GQLMCPRuntimeError(RuntimeError):
@@ -63,9 +67,11 @@ def filter_passthrough_headers(
     wrapped app: a name not in ``allowed`` never reaches a route, so an MCP
     client cannot smuggle internal headers (x-internal-token and friends).
     Matching is case-insensitive on both sides — HTTP/2 lowercases all field
-    names, and user config may not.
+    names, and user config may not. Protocol headers (``content-type`` /
+    ``accept``) are always refused, whitelist or not: the invoker owns them,
+    and a forwarded value would retype the JSON body request.
     """
-    allowed_lower = {h.strip().lower() for h in allowed}
+    allowed_lower = {h.strip().lower() for h in allowed} - _PROTECTED_HEADERS
     return {k.lower(): v for k, v in headers.items() if k.lower() in allowed_lower}
 
 
@@ -157,7 +163,7 @@ class RouteInvoker:
         self,
         app: Any,
         *,
-        timeout: float = 30.0,
+        timeout: float | None = 30.0,
         manage_lifespan: bool = True,
     ) -> None:
         self._app = app
@@ -175,6 +181,10 @@ class RouteInvoker:
     @property
     def manage_lifespan(self) -> bool:
         return self._manage_lifespan
+
+    @property
+    def timeout(self) -> float | None:
+        return self._timeout
 
     def disable_lifespan_management(self) -> None:
         """Stop managing the app lifespan (when the host server runs it)."""
@@ -231,13 +241,24 @@ class RouteInvoker:
             kwargs,
             {str(k): str(v) for k, v in extra_headers.items()} if extra_headers else None,
         )
-        response = await client.request(
-            plan.method,
-            plan.path,
-            params=list(plan.params),
-            json=plan.json_body,
-            headers=plan.headers,
-        )
+        # ASGITransport does NOT enforce httpx timeouts (in-process calls
+        # bypass httpcore) — asyncio.wait_for is the actual enforcement.
+        try:
+            response = await asyncio.wait_for(
+                client.request(
+                    plan.method,
+                    plan.path,
+                    params=list(plan.params),
+                    json=plan.json_body,
+                    headers=plan.headers,
+                ),
+                timeout=self._timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            raise GraphQLError(
+                f"{route.method} {route.path} timed out after {self._timeout}s",
+                extensions={"code": "TIMEOUT", "http_status": 504},
+            ) from exc
         if response.status_code >= 400:
             raise _http_error(route, response)
         if "application/json" in response.headers.get("content-type", ""):

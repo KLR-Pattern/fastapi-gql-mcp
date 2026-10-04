@@ -43,6 +43,20 @@ GRAPHIQL_HTML = """
   <div id="graphiql">
     <div class="loading">Loading GraphiQL...</div>
   </div>
+  <script>
+    // Offline/intranet notice: the imports below come from the esm.sh CDN;
+    // when it is unreachable the loading placeholder would hang forever.
+    // If GraphiQL has not rendered after 10s, say so and point at the raw
+    // endpoint (which never depended on the CDN).
+    window.setTimeout(function () {
+      var el = document.querySelector('#graphiql .loading');
+      if (el) {
+        el.textContent = 'GraphiQL failed to load — esm.sh CDN unreachable ' +
+          '(offline or restricted network?). The GraphQL API itself is fine: ' +
+          'POST {graphql_url} directly.';
+      }
+    }, 10000);
+  </script>
   <script type="module">
     import React from 'react';
     import ReactDOM from 'react-dom/client';

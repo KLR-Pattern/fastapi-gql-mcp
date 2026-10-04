@@ -344,3 +344,28 @@ class TestMutationOnlyApp:
 
         with pytest.raises(GQLMCPConfigError, match="mutation-only"):
             RouterGraphQLHandler(app, allow_mutation=True)
+
+
+class TestSkips:
+    """R2: the scanner's skip report is caller-visible, not log-only."""
+
+    def test_skips_report_untyped_route(self):
+        app = FastAPI()
+
+        @app.get("/now")
+        async def now():  # untyped on purpose: no response_model, no annotation
+            return {"ts": 1}
+
+        @app.get("/items")
+        async def items() -> dict:
+            return {"x": 1}
+
+        h = RouterGraphQLHandler(app)
+        assert len(h.skips) == 1
+        assert h.skips[0].path == "/now"
+        assert h.skips[0].method == "GET"
+        assert "no typed response" in h.skips[0].reason
+
+    def test_no_skips_on_clean_app(self):
+        h = RouterGraphQLHandler(build_app(), allow_mutation=True)
+        assert h.skips == []

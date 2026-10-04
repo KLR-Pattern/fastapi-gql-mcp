@@ -84,6 +84,7 @@ class DomainRegistry:
 
     def __init__(self, routes: Sequence[RouteInfo]) -> None:
         self._nodes: dict[tuple[str, ...], DomainNode] = {}
+        self._children: dict[tuple[str, ...], set[str]] = {}
         for route in routes:
             for domain in route.domains:
                 for depth in range(1, len(domain) + 1):
@@ -92,6 +93,11 @@ class DomainRegistry:
                     # counts through their subtree at query time.
                     if depth == len(domain):
                         node.add(route)
+        # Precomputed child index: children() answers in O(1) instead of
+        # scanning every node per list_domains call. Single-segment paths
+        # parent to () — the root's direct children are indexed too.
+        for node_path in self._nodes:
+            self._children.setdefault(node_path[:-1], set()).add(node_path[-1])
 
     def _node(self, path: tuple[str, ...]) -> DomainNode:
         node = self._nodes.get(path)
@@ -105,12 +111,7 @@ class DomainRegistry:
 
     def children(self, path: tuple[str, ...] = ()) -> list[str]:
         """Direct child segment names under ``path``."""
-        depth = len(path)
-        found: set[str] = set()
-        for node_path in self._nodes:
-            if len(node_path) == depth + 1 and node_path[:depth] == path:
-                found.add(node_path[-1])
-        return sorted(found)
+        return sorted(self._children.get(tuple(path), ()))
 
     def subtree_fields(
         self, path: tuple[str, ...]
