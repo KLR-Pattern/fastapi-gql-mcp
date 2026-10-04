@@ -6,6 +6,11 @@ an MCP caller is an LLM that can emit such a document. The guard measures
 selection-set nesting (the root selection set is depth 1) with fragments
 resolved inline and cycles rejected — spreading a deep query across
 fragments cannot hide it.
+
+Introspection meta-fields (``__``-prefixed) do not count: standard tooling
+(GraphiQL, codegen, IDE plugins) ships a fixed, deep introspection document
+— depth ~15 — whose shape is bounded by the schema itself, not by the
+caller. The guard targets runaway DATA selections.
 """
 
 from __future__ import annotations
@@ -45,6 +50,10 @@ def document_depth(document: DocumentNode) -> int:
         best = 1
         for sel in sel_set.selections:
             if isinstance(sel, FieldNode):
+                if sel.name.value.startswith("__"):
+                    # introspection meta-fields don't count toward depth —
+                    # see module docstring
+                    continue
                 if sel.selection_set is not None:
                     best = max(best, 1 + selection_depth(sel.selection_set, active))
             elif isinstance(sel, InlineFragmentNode):

@@ -127,3 +127,29 @@ class TestHandlerIntegration:
     def test_invalid_max_depth_rejected(self):
         with pytest.raises(ValueError, match="max_depth"):
             RouterGraphQLHandler(node_app(), max_depth=0)
+
+
+class TestIntrospectionExempt:
+    """GraphiQL/codegen ship a fixed deep introspection document (depth
+    ~15) — meta-fields must not count toward max_depth, or every standard
+    tool breaks out of the box while the data guard stays intact."""
+
+    def test_standard_introspection_query_passes_default_guard(self):
+        from graphql.utilities import get_introspection_query
+
+        assert depth_error(get_introspection_query(), max_depth=10) is None
+
+    def test_deep_data_selection_still_rejected(self):
+        query = (
+            "query Deep { t { a { b { c { d { e { f { g { h { i { j { k } } } } } } } } } } } }"
+        )
+        err = depth_error(query, max_depth=10)
+        assert err is not None and "exceeds max_depth=10" in err.message
+
+    async def test_graphiql_schema_fetch_against_handler(self):
+        from graphql.utilities import get_introspection_query
+
+        handler = RouterGraphQLHandler(node_app())  # default max_depth=10
+        result = await handler.execute(get_introspection_query())
+        assert "errors" not in result, result.get("errors")
+        await handler.aclose()

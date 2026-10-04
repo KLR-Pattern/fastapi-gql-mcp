@@ -57,6 +57,12 @@
 
 ### Fixed
 
+- **max_depth no longer rejects introspection**: `__`-prefixed meta-fields
+  don't count toward the depth guard — GraphiQL/codegen/IDE plugins ship a
+  fixed ~15-deep introspection document, which the default `max_depth=10`
+  rejected ("Error fetching schema" on a stock GraphiQL page). The guard
+  still bounds runaway DATA selections.
+
 - `RouteInvoker(timeout=...)` was dead configuration: httpx's
   `ASGITransport` never enforces timeouts (in-process calls bypass
   httpcore) — a route could hang forever regardless of the setting.
