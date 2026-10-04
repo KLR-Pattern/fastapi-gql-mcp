@@ -1,0 +1,72 @@
+{
+  "catalog": [
+    {
+      "routes": 5,
+      "tool_count": 5,
+      "catalog_bytes": 2743
+    },
+    {
+      "routes": 10,
+      "tool_count": 10,
+      "catalog_bytes": 4878
+    },
+    {
+      "routes": 25,
+      "tool_count": 25,
+      "catalog_bytes": 11343
+    },
+    {
+      "routes": 50,
+      "tool_count": 50,
+      "catalog_bytes": 22168
+    },
+    {
+      "routes": 100,
+      "tool_count": 100,
+      "catalog_bytes": 43818
+    }
+  ],
+  "composition": {
+    "tool_calls": 2,
+    "mean_ms": 1.42,
+    "p95_ms": 1.47
+  },
+  "latency": {
+    "p50_ms": 0.91,
+    "p95_ms": 1.0,
+    "mean_ms": 0.91
+  },
+  "response_size": {
+    "note_count": 20,
+    "full_bytes": 2875
+  },
+  "error_semantics": {
+    "isError": true,
+    "text": "Error calling get_note_api_notes__note_id__get. Status code: 404. Response: {\"detail\":\"note not found\"}"
+  },
+  "fidelity_tool_description": "List Notes\n\nList YOUR notes.\n\n``q`` filters by substring over title and body.\n\n### Responses:\n\n**200**: Successful Response (Success Response)\nContent-Type: application/json\n\n**Example Response:**\n```json\n[\n  {\n    \"id\": 1,\n    \"title\": \"Title\",\n    \"body\": \"Body\",\n    \"owner\": \"Owner\"\n  }\n]\n```",
+  "fidelity_input_schema": {
+    "type": "object",
+    "properties": {
+      "q": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "substring over title/body",
+        "title": "q",
+        "type": "string"
+      },
+      "active": {
+        "type": "boolean",
+        "default": true,
+        "title": "active"
+      }
+    },
+    "title": "list_notes_api_notes_getArguments"
+  }
+}

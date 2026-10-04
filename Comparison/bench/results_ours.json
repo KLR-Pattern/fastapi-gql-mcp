@@ -1,0 +1,142 @@
+{
+  "catalog": [
+    {
+      "routes": 5,
+      "ours_simple": {
+        "tool_count": 3,
+        "catalog_bytes": 1937,
+        "sdl_bytes": 1249,
+        "full_context_bytes": 3186
+      },
+      "ours_progressive": {
+        "tool_count": 6,
+        "catalog_bytes": 2744,
+        "discovery_domains_bytes": 267,
+        "discovery_list_bytes": 615,
+        "discovery_fragment_bytes": 1330,
+        "discovery_total_bytes": 4956
+      }
+    },
+    {
+      "routes": 10,
+      "ours_simple": {
+        "tool_count": 3,
+        "catalog_bytes": 1937,
+        "sdl_bytes": 1838,
+        "full_context_bytes": 3775
+      },
+      "ours_progressive": {
+        "tool_count": 6,
+        "catalog_bytes": 2744,
+        "discovery_domains_bytes": 434,
+        "discovery_list_bytes": 615,
+        "discovery_fragment_bytes": 1330,
+        "discovery_total_bytes": 5123
+      }
+    },
+    {
+      "routes": 25,
+      "ours_simple": {
+        "tool_count": 3,
+        "catalog_bytes": 1937,
+        "sdl_bytes": 2788,
+        "full_context_bytes": 4725
+      },
+      "ours_progressive": {
+        "tool_count": 6,
+        "catalog_bytes": 2744,
+        "discovery_domains_bytes": 435,
+        "discovery_list_bytes": 615,
+        "discovery_fragment_bytes": 1330,
+        "discovery_total_bytes": 5124
+      }
+    },
+    {
+      "routes": 50,
+      "ours_simple": {
+        "tool_count": 3,
+        "catalog_bytes": 1937,
+        "sdl_bytes": 4388,
+        "full_context_bytes": 6325
+      },
+      "ours_progressive": {
+        "tool_count": 6,
+        "catalog_bytes": 2744,
+        "discovery_domains_bytes": 436,
+        "discovery_list_bytes": 615,
+        "discovery_fragment_bytes": 1330,
+        "discovery_total_bytes": 5125
+      }
+    },
+    {
+      "routes": 100,
+      "ours_simple": {
+        "tool_count": 3,
+        "catalog_bytes": 1937,
+        "sdl_bytes": 7588,
+        "full_context_bytes": 9525
+      },
+      "ours_progressive": {
+        "tool_count": 6,
+        "catalog_bytes": 2744,
+        "discovery_domains_bytes": 436,
+        "discovery_list_bytes": 615,
+        "discovery_fragment_bytes": 1330,
+        "discovery_total_bytes": 5125
+      }
+    }
+  ],
+  "composition": {
+    "tool_calls": 1,
+    "mean_ms": 2.01,
+    "p95_ms": 2.61
+  },
+  "latency": {
+    "p50_ms": 1.36,
+    "p95_ms": 1.93,
+    "mean_ms": 1.42
+  },
+  "response_size": {
+    "note_count": 20,
+    "full_bytes": 2341,
+    "projected_bytes": 610
+  },
+  "error_semantics": {
+    "success": true,
+    "data": {
+      "data": {
+        "meta": {
+          "stats": {
+            "notes": 20
+          }
+        },
+        "notes": {
+          "mine": {
+            "get_note": null
+          }
+        }
+      },
+      "errors": [
+        {
+          "message": "GET /api/notes/{note_id} -> 404: {'detail': 'note not found'}",
+          "locations": [
+            {
+              "line": 1,
+              "column": 43
+            }
+          ],
+          "path": [
+            "notes",
+            "mine",
+            "get_note"
+          ],
+          "extensions": {
+            "code": "HTTP_404",
+            "http_status": 404
+          }
+        }
+      ]
+    }
+  },
+  "fidelity_sdl_fragment": "type NotesMineQuery {\n  \"\"\"\n  List YOUR notes.\n  \n  ``q`` filters by substring over title and body.\n  \"\"\"\n  list_notes(\n    \"\"\"substring over title/body\"\"\"\n    q: String = null\n    active: Boolean = true\n  ): [NoteOut!]\n\n  \"\"\"Fetch one of YOUR notes by id.\"\"\"\n  get_note(note_id: Int!): NoteOut\n}\n\n\"\"\"A note owned by the logged-in user.\"\"\""
+}

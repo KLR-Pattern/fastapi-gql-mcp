@@ -1,0 +1,252 @@
+{
+  "method": {
+    "hardware": "macOS, Apple Silicon (this dev machine)",
+    "date": "2026-10-04",
+    "catalog": "JSON bytes of the tools/list payload; tokens = bytes/4",
+    "latency": "in-memory MCP sessions, 200 iters (50 for composition)",
+    "envs": "two separate venvs — fastmcp 4 requires mcp>=2, fastapi-mcp 0.4.0 breaks on mcp 2.x (Server signature change)"
+  },
+  "catalog": [
+    {
+      "routes": 5,
+      "theirs": {
+        "routes": 5,
+        "tool_count": 5,
+        "catalog_bytes": 2743,
+        "catalog_tokens": 685
+      },
+      "ours_simple": {
+        "tool_count": 3,
+        "catalog_bytes": 1937,
+        "sdl_bytes": 1249,
+        "full_context_bytes": 3186,
+        "full_context_tokens": 796,
+        "catalog_tokens": 484
+      },
+      "ours_progressive": {
+        "tool_count": 6,
+        "catalog_bytes": 2744,
+        "discovery_domains_bytes": 267,
+        "discovery_list_bytes": 615,
+        "discovery_fragment_bytes": 1330,
+        "discovery_total_bytes": 4956,
+        "discovery_total_tokens": 1239,
+        "catalog_tokens": 686
+      }
+    },
+    {
+      "routes": 10,
+      "theirs": {
+        "routes": 10,
+        "tool_count": 10,
+        "catalog_bytes": 4878,
+        "catalog_tokens": 1219
+      },
+      "ours_simple": {
+        "tool_count": 3,
+        "catalog_bytes": 1937,
+        "sdl_bytes": 1838,
+        "full_context_bytes": 3775,
+        "full_context_tokens": 943,
+        "catalog_tokens": 484
+      },
+      "ours_progressive": {
+        "tool_count": 6,
+        "catalog_bytes": 2744,
+        "discovery_domains_bytes": 434,
+        "discovery_list_bytes": 615,
+        "discovery_fragment_bytes": 1330,
+        "discovery_total_bytes": 5123,
+        "discovery_total_tokens": 1280,
+        "catalog_tokens": 686
+      }
+    },
+    {
+      "routes": 25,
+      "theirs": {
+        "routes": 25,
+        "tool_count": 25,
+        "catalog_bytes": 11343,
+        "catalog_tokens": 2835
+      },
+      "ours_simple": {
+        "tool_count": 3,
+        "catalog_bytes": 1937,
+        "sdl_bytes": 2788,
+        "full_context_bytes": 4725,
+        "full_context_tokens": 1181,
+        "catalog_tokens": 484
+      },
+      "ours_progressive": {
+        "tool_count": 6,
+        "catalog_bytes": 2744,
+        "discovery_domains_bytes": 435,
+        "discovery_list_bytes": 615,
+        "discovery_fragment_bytes": 1330,
+        "discovery_total_bytes": 5124,
+        "discovery_total_tokens": 1281,
+        "catalog_tokens": 686
+      }
+    },
+    {
+      "routes": 50,
+      "theirs": {
+        "routes": 50,
+        "tool_count": 50,
+        "catalog_bytes": 22168,
+        "catalog_tokens": 5542
+      },
+      "ours_simple": {
+        "tool_count": 3,
+        "catalog_bytes": 1937,
+        "sdl_bytes": 4388,
+        "full_context_bytes": 6325,
+        "full_context_tokens": 1581,
+        "catalog_tokens": 484
+      },
+      "ours_progressive": {
+        "tool_count": 6,
+        "catalog_bytes": 2744,
+        "discovery_domains_bytes": 436,
+        "discovery_list_bytes": 615,
+        "discovery_fragment_bytes": 1330,
+        "discovery_total_bytes": 5125,
+        "discovery_total_tokens": 1281,
+        "catalog_tokens": 686
+      }
+    },
+    {
+      "routes": 100,
+      "theirs": {
+        "routes": 100,
+        "tool_count": 100,
+        "catalog_bytes": 43818,
+        "catalog_tokens": 10954
+      },
+      "ours_simple": {
+        "tool_count": 3,
+        "catalog_bytes": 1937,
+        "sdl_bytes": 7588,
+        "full_context_bytes": 9525,
+        "full_context_tokens": 2381,
+        "catalog_tokens": 484
+      },
+      "ours_progressive": {
+        "tool_count": 6,
+        "catalog_bytes": 2744,
+        "discovery_domains_bytes": 436,
+        "discovery_list_bytes": 615,
+        "discovery_fragment_bytes": 1330,
+        "discovery_total_bytes": 5125,
+        "discovery_total_tokens": 1281,
+        "catalog_tokens": 686
+      }
+    }
+  ],
+  "composition": {
+    "ours": {
+      "tool_calls": 1,
+      "mean_ms": 2.01,
+      "p95_ms": 2.61
+    },
+    "theirs": {
+      "tool_calls": 2,
+      "mean_ms": 1.42,
+      "p95_ms": 1.47
+    }
+  },
+  "latency": {
+    "ours": {
+      "p50_ms": 1.36,
+      "p95_ms": 1.93,
+      "mean_ms": 1.42
+    },
+    "theirs": {
+      "p50_ms": 0.91,
+      "p95_ms": 1.0,
+      "mean_ms": 0.91
+    }
+  },
+  "response_size": {
+    "ours": {
+      "note_count": 20,
+      "full_bytes": 2341,
+      "projected_bytes": 610
+    },
+    "theirs": {
+      "note_count": 20,
+      "full_bytes": 2875
+    }
+  },
+  "error_semantics": {
+    "ours": {
+      "success": true,
+      "data": {
+        "data": {
+          "meta": {
+            "stats": {
+              "notes": 20
+            }
+          },
+          "notes": {
+            "mine": {
+              "get_note": null
+            }
+          }
+        },
+        "errors": [
+          {
+            "message": "GET /api/notes/{note_id} -> 404: {'detail': 'note not found'}",
+            "locations": [
+              {
+                "line": 1,
+                "column": 43
+              }
+            ],
+            "path": [
+              "notes",
+              "mine",
+              "get_note"
+            ],
+            "extensions": {
+              "code": "HTTP_404",
+              "http_status": 404
+            }
+          }
+        ]
+      }
+    },
+    "theirs": {
+      "isError": true,
+      "text": "Error calling get_note_api_notes__note_id__get. Status code: 404. Response: {\"detail\":\"note not found\"}"
+    }
+  },
+  "fidelity": {
+    "ours_sdl_fragment": "type NotesMineQuery {\n  \"\"\"\n  List YOUR notes.\n  \n  ``q`` filters by substring over title and body.\n  \"\"\"\n  list_notes(\n    \"\"\"substring over title/body\"\"\"\n    q: String = null\n    active: Boolean = true\n  ): [NoteOut!]\n\n  \"\"\"Fetch one of YOUR notes by id.\"\"\"\n  get_note(note_id: Int!): NoteOut\n}\n\n\"\"\"A note owned by the logged-in user.\"\"\"",
+    "theirs_tool_description": "List Notes\n\nList YOUR notes.\n\n``q`` filters by substring over title and body.\n\n### Responses:\n\n**200**: Successful Response (Success Response)\nContent-Type: application/json\n\n**Example Response:**\n```json\n[\n  {\n    \"id\": 1,\n    \"title\": \"Title\",\n    \"body\": \"Body\",\n    \"owner\": \"Owner\"\n  }\n]\n```",
+    "theirs_input_schema": {
+      "type": "object",
+      "properties": {
+        "q": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "substring over title/body",
+          "title": "q",
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean",
+          "default": true,
+          "title": "active"
+        }
+      },
+      "title": "list_notes_api_notes_getArguments"
+    }
+  }
+}
