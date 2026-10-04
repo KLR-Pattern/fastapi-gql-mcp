@@ -38,6 +38,22 @@
 
 ### Fixed
 
+- A leaf field colliding with a child domain segment inside the same group
+  (e.g. a `catalog` endpoint tagged `shop` plus routes tagged
+  `shop:catalog`) was silently dropped: the child group field overwrote
+  it in the object type, with no warning — and the progressive-disclosure
+  index kept advertising the ghost field. Same-named leaves already failed
+  fast with `DuplicateFieldError`; leaf-vs-subdomain collisions now fail
+  fast the same way, naming both claimants.
+
+- `mode="auto"` counted routes via `isinstance(app.routes, APIRoute)`,
+  which counts ZERO on FastAPI >= 0.142 (include_router results are
+  wrapped in `_IncludedRouter`) — a 30-route app stayed in simple mode,
+  handing agents one giant SDL. It also ignored `include`/`exclude`: an
+  app narrowed to 3 schema routes still switched to progressive. The
+  threshold decision now uses the scanned route count (what actually
+  enters the schema).
+
 - Single non-model body parameters (e.g. `payload: dict[str, Any]`) were
   wrongly wrapped as `{"payload": ...}` — FastAPI gives a lone body param
   the WHOLE body unless `Body(embed=True)` or multiple body params are

@@ -66,6 +66,62 @@ class TestSDLAndIntrospection:
         assert result == {"data": {"__schema": {"queryType": {"name": "Query"}}}}
 
 
+class TestDomainCollisions:
+    """A leaf field and a child domain segment landing in the SAME group
+    object type compete for one GraphQL field name — this must fail fast
+    (same policy as two same-named leaves), never silently drop the leaf."""
+
+    def test_leaf_colliding_with_child_domain_fails_fast(self):
+        from fastapi_gql_mcp.naming import DuplicateFieldError
+
+        class Summary(BaseModel):
+            total: int
+
+        class Product(BaseModel):
+            id: int
+
+        app = FastAPI()
+
+        @app.get("/catalog-summary", response_model=Summary, tags=["shop"])
+        async def catalog() -> Summary:
+            """Leaf field 'catalog' inside ShopQuery..."""
+            return Summary(total=5)
+
+        @app.get("/products", response_model=list[Product], tags=["shop:catalog"])
+        async def list_products() -> list[Product]:
+            """...and the child domain segment 'catalog' also inside ShopQuery."""
+            return [Product(id=1)]
+
+        with pytest.raises(DuplicateFieldError):
+            RouterGraphQLHandler(app)
+
+    async def test_leaf_coexisting_with_child_domain_is_kept(self):
+        """Non-colliding leaf + child group in one domain must both survive."""
+
+        class Summary(BaseModel):
+            total: int
+
+        class Product(BaseModel):
+            id: int
+
+        app = FastAPI()
+
+        @app.get("/catalog-summary", response_model=Summary, tags=["shop"])
+        async def stats() -> Summary:
+            return Summary(total=5)
+
+        @app.get("/products", response_model=list[Product], tags=["shop:catalog"])
+        async def list_products() -> list[Product]:
+            return [Product(id=1)]
+
+        h = RouterGraphQLHandler(app)
+        sdl = h.get_sdl()
+        assert "stats: Summary" in sdl
+        assert "catalog: ShopCatalogQuery" in sdl
+        result = await h.execute("{ shop { stats { total } } }")
+        assert result == {"data": {"shop": {"stats": {"total": 5}}}}
+
+
 class TestExecution:
     async def test_query_flat(self, handler):
         result = await handler.execute("{ shop { list_items { id name } } }")

@@ -209,6 +209,20 @@ class SchemaBuilder:
             fields[route.field_name] = field
         child_segments: list[str] = []
         for seg, child in sorted(node.children.items()):
+            # A child domain segment competes with leaf fields for the same
+            # namespace (one GraphQL object type) — without this check the
+            # group would silently REPLACE the same-named leaf field.
+            previous = seen.get(seg)
+            if previous is not None:
+                raise DuplicateFieldError(
+                    f"GraphQL field name {seg!r} is used twice inside "
+                    f"domain group '{':'.join(path)}' — by leaf route "
+                    f"{previous[0]} {previous[1]} and the subdomain "
+                    f"'{':'.join((*path, seg))}'. Names must be unique within "
+                    f"a domain (the same GraphQL object type); rename the "
+                    f"endpoint function or re-tag it out of parent domain "
+                    f"'{':'.join(path)}'."
+                )
             fields[seg] = self._group_field(child, (*path, seg), mutation=mutation)
             child_segments.append(seg)
         obj = GraphQLObjectType(

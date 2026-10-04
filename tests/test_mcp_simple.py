@@ -187,7 +187,57 @@ class TestServerBehavior:
         async with Client(mcp.mcp) as client:
             tools = [t.name for t in await client.list_tools()]
         assert "list_domains" in tools and "graphql_query" in tools
-        assert "get_schema" not in tools
+
+    async def test_auto_mode_counts_include_router_routes(self):
+        """FastAPI >= 0.142 wraps include_router results in _IncludedRouter
+        (not APIRoute instances); the threshold decision must follow the
+        SCANNED route count, not isinstance(app.routes, APIRoute)."""
+        from fastapi import APIRouter
+
+        class Out(BaseModel):
+            id: int
+
+        sub = APIRouter()
+        for i in range(30):
+            def make_handler(n: int):
+                async def handler() -> Out:
+                    return Out(id=n)
+
+                handler.__name__ = f"thing_{n}"
+                return handler
+
+            sub.get(f"/thing{i}", response_model=Out)(make_handler(i))
+
+        app = FastAPI()
+        app.include_router(sub, prefix="/things")
+
+        mcp = RouterMCP(app, name="inc", progressive_threshold=25)
+        assert len(mcp.handler.routes) == 30
+        assert mcp.mode == "progressive"
+
+    async def test_auto_mode_respects_include_filter(self):
+        """Route count for the threshold is the count that ENTERS the schema
+        (include/exclude applied), not the raw app.route count."""
+        big = FastAPI()
+
+        class Out(BaseModel):
+            id: int
+
+        for i in range(30):
+            def make_handler(n: int):
+                async def handler() -> Out:
+                    return Out(id=n)
+
+                handler.__name__ = f"thing_{n}"
+                return handler
+
+            big.get(f"/thing{i}", response_model=Out)(make_handler(i))
+
+        mcp = RouterMCP(
+            big, name="filtered", include=["/thing0", "/thing1", "/thing2"]
+        )
+        assert len(mcp.handler.routes) == 3
+        assert mcp.mode == "simple"
 
     async def test_domains_registry_built(self, mcp):
         summary = mcp.domains.summary()

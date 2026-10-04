@@ -67,8 +67,9 @@ class RouterMCP:
         mode: ``simple`` registers get_schema + graphql_query;
             ``progressive`` registers the 4-layer tag-based disclosure
             (list_domains -> list_queries -> get_query_schema ->
-            graphql_query); ``auto`` picks progressive once the app exceeds
-            ``progressive_threshold`` routes.
+            graphql_query); ``auto`` picks progressive once the schema
+            carries more than ``progressive_threshold`` routes (counted
+            after include/exclude filtering).
         include_hidden: Also scan routes with ``include_in_schema=False``.
     """
 
@@ -98,25 +99,27 @@ class RouterMCP:
             mutation_include=mutation_include,
             passthrough_headers=passthrough_headers,
         )
-        self._resolved_mode = self._resolve_mode(mode, app)
+        self._resolved_mode = self._resolve_mode(mode)
         self._domains = DomainRegistry(self._handler.routes)
         self._mcp = self._build_mcp(name, allow_mutation, auth)
 
     def _resolve_mode(
-        self, mode: Literal["auto", "simple", "progressive"], app: FastAPI
+        self, mode: Literal["auto", "simple", "progressive"]
     ) -> Literal["simple", "progressive"]:
         if mode == "simple":
             return "simple"
         if mode == "progressive":
             return "progressive"
         # auto: progressive disclosure pays off once the SDL is too big to
-        # hand an agent in one shot.
-        from fastapi.routing import APIRoute
-
-        route_count = sum(1 for r in app.routes if isinstance(r, APIRoute))
+        # hand an agent in one shot. Count the routes that ENTER the schema
+        # (include/exclude applied, include_router wrappers resolved by the
+        # scanner) — raw app.routes undercounts on FastAPI >= 0.142, where
+        # include_router results are wrapped in non-APIRoute objects, and
+        # overcounts when include/exclude narrows the schema.
+        route_count = len(self._handler.routes)
         if route_count > self._progressive_threshold:
             logger.info(
-                "App has %d routes (> %d): using progressive disclosure",
+                "Schema carries %d routes (> %d): using progressive disclosure",
                 route_count,
                 self._progressive_threshold,
             )
