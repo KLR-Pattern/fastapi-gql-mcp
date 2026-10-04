@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Observability (OpenTelemetry), one waterfall per query**: the bridge
+  injects W3C trace context (`traceparent`/`tracestate`/`baggage`) into
+  every in-process route call — bridge-generated, so it flows regardless of
+  `passthrough_headers`, and is a no-op without an SDK (new core dependency
+  `opentelemetry-api`, non-recording by default). A `graphql.execute` span
+  covers the GraphQL orchestration layer; route-call timeouts and
+  concurrency queue waits surface as span events (`route.timeout`,
+  `route.queue`). With fastmcp's tool spans and FastAPI >= 0.142's native
+  route spans, one MCP query now lands as
+  `tools/call > graphql.execute > GET /route` in a single trace (previously
+  the route spans were orphan traces). Regression-locked by
+  `tests/test_otel_propagation.py`; walkthrough in
+  `examples/otel_smoke.md`.
+
 - **`max_depth` (default 10, `None` disables)** on
   `RouterGraphQLHandler` / `RouterMCP`: recursive models make selection-set
   nesting unbounded and an MCP caller is an LLM that can emit runaway

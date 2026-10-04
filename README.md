@@ -206,6 +206,29 @@ FastAPI `Depends` on the mounted route) — the bridge authenticates no one
 itself, and combine with `allow_mutation=False` / `mutation_include` to keep
 writes out of reach.
 
+## Observability (OpenTelemetry)
+
+Install an OpenTelemetry SDK next to your app — that's the whole setup. The
+spans are emitted natively from both ends, and the bridge stitches them into
+one waterfall:
+
+- **fastmcp** emits the tool level (`tools/call graphql_query`);
+- the bridge emits `graphql.execute` (the GraphQL orchestration layer) and
+  injects W3C `traceparent` into every in-process route call — independent
+  of `passthrough_headers`, a no-op without an SDK (`opentelemetry-api`
+  only, non-recording by default);
+- **FastAPI >= 0.142** emits the route level (`GET /things` plus
+  `fastapi.dependencies/endpoint/serialization`) and extracts the injected
+  context — so route spans nest under `graphql.execute`, one trace per
+  query.
+
+Route-call timeouts and concurrency queue waits surface as span events
+(`route.timeout`, `route.queue`) on `graphql.execute`. A runnable proof
+(plus the Jaeger walkthrough): [examples/otel_smoke.md](./examples/otel_smoke.md);
+a live wired app: [examples/notes_oauth](./examples/notes_oauth) (env-gated
+`app/observability.py`). Metrics (per-URL QPS/p99) are out of scope here —
+derive them from spans with an OTel Collector `spanmetrics` connector.
+
 ## Hardening the bridge
 
 Two knobs are built in and on by default:

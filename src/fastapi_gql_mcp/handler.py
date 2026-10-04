@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from graphql import GraphQLSchema, graphql, print_schema
+from opentelemetry import trace
 
 from fastapi_gql_mcp.depth_guard import depth_error
 from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
@@ -125,14 +126,27 @@ class RouterGraphQLHandler:
             if error is not None:
                 return {"errors": [error.formatted]}
         await self._invoker.start()
-        result = await graphql(
-            self._schema,
-            query,
-            variable_values=variables or {},
-            operation_name=operation_name,
-            context_value=InvocationContext(headers=headers),
-            rules=self._validation_rules or None,
-        )
+        # The span that makes the middle layer visible: fastmcp's tool span
+        # covers the call, FastAPI's route spans cover execution — this one
+        # wraps the GraphQL orchestration between them (and the invoker
+        # injects its trace context FROM here, so route spans nest under
+        # it). No-op without an SDK installed.
+        with trace.get_tracer("fastapi_gql_mcp").start_as_current_span(
+            "graphql.execute"
+        ) as span:
+            span.set_attribute(
+                "graphql.operation_name", operation_name or "_anonymous"
+            )
+            result = await graphql(
+                self._schema,
+                query,
+                variable_values=variables or {},
+                operation_name=operation_name,
+                context_value=InvocationContext(headers=headers),
+                rules=self._validation_rules or None,
+            )
+            if result.errors:
+                span.set_attribute("graphql.error_count", len(result.errors))
         payload: dict[str, Any] = {}
         if result.data is not None:
             payload["data"] = result.data

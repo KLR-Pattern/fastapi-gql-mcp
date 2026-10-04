@@ -12,6 +12,9 @@ dependencies = [
     "graphql-core>=3.2,<4",
     "httpx>=0.27",
     "asgi-lifespan>=2.1",
+    # tracer plumbing only — a no-op without an SDK installed (L3 context
+    # propagation; see "Observability" in the README)
+    "opentelemetry-api>=1.20",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +31,7 @@ packages = ["src/fastapi_gql_mcp"]
 
 [dependency-groups]
 dev = [
+    "opentelemetry-sdk>=1.20",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "ruff>=0.6",

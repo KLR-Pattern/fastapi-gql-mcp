@@ -2,8 +2,9 @@
 
 分支：**`otel-smoke`**（基于 master，新增 `examples/otel_smoke.py`）
 
-目标：验证 fastapi-gql-mcp 的可观测性现状 —— 装上 OpenTelemetry SDK 后，
-fastmcp 的 tool 级 span 和 FastAPI ≥0.142 的路由级 span 免费出现，零桥代码。
+目标：验证 fastapi-gql-mcp 的可观测性 —— 装上 OpenTelemetry SDK 后，
+fastmcp 的 tool 级 span 和 FastAPI ≥0.142 的路由级 span 免费出现，且桥注入的
+W3C traceparent 把两层（连同 `graphql.execute` 中间层 span）缝成**同一条 trace**。
 **所有依赖通过 `uv run --with` 临时安装，不修改项目环境。**
 
 ---
@@ -28,7 +29,7 @@ uv run --with opentelemetry-sdk python examples/otel_smoke.py --mode console
 ```
 
 **预期输出**：最后打印 `query result: {'success': True, ...}`，
-此前输出若干 JSON 格式的 span（约 11 个 `"name"` 字段）。
+此前输出若干 JSON 格式的 span（约 12 个 `"name"` 字段）。
 
 **核对 span 名**（出现即通过）：
 
@@ -36,10 +37,12 @@ uv run --with opentelemetry-sdk python examples/otel_smoke.py --mode console
 - `GET /things`、`fastapi.dependencies`、`fastapi.endpoint`、
   `fastapi.serialization` —— FastAPI 0.142 原生路由级 span
 - `server/discover` / `tools/list` —— MCP 握手 span
+- `graphql.execute` —— 桥自带的 GraphQL 编排层 span
 
-**关键观察**：`GET /things` 的 `trace_id` 与 `tools/call graphql_query`
-的 `trace_id` **不同** —— 两棵树是断开的（桥的进程内调用未携带
-traceparent，即待实施的 L3 工作）。这是本冒烟测试要证明的核心事实。
+**关键观察**：`GET /things` 与 `tools/call graphql_query`、`graphql.execute`
+的 `trace_id` **相同**，且嵌套为 `tools/call > graphql.execute > GET /things`
+—— 桥在进程内 ASGI 调用里注入了 W3C traceparent（L3 已落地），
+一次 MCP 查询就是一条完整瀑布。
 
 ---
 
@@ -88,9 +91,9 @@ curl -s "http://localhost:16686/api/services"          # 应含 fastapi-gql-mcp-
 curl -s "http://localhost:16686/api/traces?service=fastapi-gql-mcp-smoke&limit=5"
 ```
 
-**预期**：3 条左右 trace。其中一条含 `tools/call graphql_query`（MCP 树），
-另一条含 `GET /things` + 三个 `fastapi.*`（路由树）—— 两条 trace 的
-traceID 不同，与步骤 1 的结论一致。
+**预期**：2–3 条 trace。含 `tools/call graphql_query` 的那条同时内嵌
+`graphql.execute` 与 `GET /things` + 三个 `fastapi.*` —— 一条完整瀑布
+（另两条是 MCP 握手的 `server/discover` / `tools/list`）。
 
 ---
 
@@ -111,4 +114,4 @@ docker stop jaeger-smoke && docker rm jaeger-smoke
 | 脚本执行 | 输出 `query result: {...success: True...}` |
 | console span | 出现 `tools/call graphql_query` 与 `GET /things` |
 | Jaeger 接收 | `/api/services` 含 `fastapi-gql-mcp-smoke` |
-| 两树分离 | MCP 树与路由树 traceID 不同（记录下来，作为 L3 完成前的基线） |
+| 树合一 | `tools/call > graphql.execute > GET /things` 同一 traceID 且正确嵌套 |

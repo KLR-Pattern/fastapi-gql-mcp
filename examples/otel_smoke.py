@@ -8,12 +8,14 @@ appear from two places that emit them natively:
 2. FastAPI >= 0.142 (the wrapped app): ``GET /things`` plus
    ``fastapi.dependencies`` / ``fastapi.endpoint`` /
    ``fastapi.serialization`` — the route-level spans.
+3. the bridge itself: ``graphql.execute`` (orchestration layer) and W3C
+   trace context injected into each route call, stitching 1+2 into one
+   trace (a no-op without an SDK installed).
 
-Both were verified live (2026-10-04). What you will NOT see yet: the two
-span trees share a trace_id. The bridge's in-process ASGI call does not
-carry a ``traceparent`` header yet (the planned L3 work), so the tool tree
-and the route tree land as SEPARATE traces. When L3 lands, they merge into
-one waterfall.
+All three verified live (2026-10-04). The bridge injects a W3C
+``traceparent`` into every in-process route call and emits its own
+``graphql.execute`` span, so the three layers land as ONE waterfall:
+``tools/call graphql_query > graphql.execute > GET /things``.
 
 Run it (no project deps touched — everything rides on ``--with``):
 

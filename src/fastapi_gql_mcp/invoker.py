@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -17,12 +18,27 @@ from typing import Any
 from asgi_lifespan import LifespanManager
 from graphql import GraphQLError
 from httpx import ASGITransport, AsyncClient, Response
+from opentelemetry import trace
 
 from fastapi_gql_mcp.scanner import RouteInfo
 
 logger = logging.getLogger(__name__)
 
 _BASE_HEADERS: dict[str, str] = {"accept": "application/json"}
+
+
+def _inject_trace_context(headers: dict[str, str]) -> None:
+    """W3C trace context (traceparent/tracestate/baggage) into the request.
+
+    Bridge-GENERATED, not caller-forwarded: it applies regardless of the
+    passthrough_headers whitelist, and is a no-op without an SDK
+    (opentelemetry-api defaults to a non-recording tracer). FastAPI >=
+    0.142's native route spans extract it, so each route call nests under
+    the calling span instead of landing as an orphan trace.
+    """
+    from opentelemetry.propagate import inject
+
+    inject(headers)
 _MAX_ERROR_BODY = 500
 # Headers the invoker owns: the bridge always speaks JSON, and a forwarded
 # value here would retype the request (content-type: text/plain + JSON body
@@ -255,10 +271,13 @@ class RouteInvoker:
             kwargs,
             {str(k): str(v) for k, v in extra_headers.items()} if extra_headers else None,
         )
+        _inject_trace_context(plan.headers)
         # Sibling GraphQL fields resolve concurrently, so one wide query is a
         # fan-out of route calls. The semaphore bounds that fan-out; it is
         # acquired INSIDE the timeout so queueing time counts against it (a
         # call stuck waiting for a slot must not outlive its own deadline).
+        _t_queue = time.monotonic()
+
         async def call() -> Response:
             if self._semaphore is None:
                 return await client.request(
@@ -269,6 +288,11 @@ class RouteInvoker:
                     headers=plan.headers,
                 )
             async with self._semaphore:
+                waited_ms = (time.monotonic() - _t_queue) * 1000
+                if waited_ms >= 1.0:  # only when it actually queued
+                    trace.get_current_span().add_event(
+                        "route.queue", {"wait_ms": round(waited_ms, 2)}
+                    )
                 return await client.request(
                     plan.method,
                     plan.path,
@@ -282,6 +306,9 @@ class RouteInvoker:
         try:
             response = await asyncio.wait_for(call(), timeout=self._timeout)
         except asyncio.TimeoutError as exc:
+            trace.get_current_span().add_event(
+                "route.timeout", {"path": route.path, "timeout_s": self._timeout}
+            )
             raise GraphQLError(
                 f"{route.method} {route.path} timed out after {self._timeout}s",
                 extensions={"code": "TIMEOUT", "http_status": 504},
