@@ -1,5 +1,7 @@
 # Why fastapi-gql-mcp
 
+**fastapi-gql-mcp turns any FastAPI app into an MCP server backed by a GraphQL schema — with zero changes to your code.** An agent gets 2–6 constant tools instead of one tool per endpoint, composes any routes into a single query, and runs as the caller with the caller's own credentials.
+
 ## The origin
 
 We pointed an AI agent at our FastAPI service through an existing MCP bridge. With five endpoints it worked. With fifty, the agent started every task by swallowing a phone book of tool definitions, then walked the API one endpoint per turn. The problem was never FastAPI, and never MCP — it was the shape of the thing between them.
