@@ -47,7 +47,28 @@ agents get:
 | **fastapi-gql-mcp** | 2-6, constant | ✓ | ✓ | none |
 
 Full head-to-head — context-growth curves, latency, auth models, selection
-guidance, all measured on one shared app: [Comparison](./Comparison/README.md).
+guidance, all measured on one shared app: **[comparison/](./comparison/)**.
+
+<details>
+<summary><b>What the comparison measures</b> (numbers below are real, from <code>comparison/bench/results.json</code>)</summary>
+
+One app (`bench/shared_app.py`, a notes CRUD API), wired into both bridges,
+driven from two venvs (they can't share one — fastmcp 4 needs mcp>=2,
+fastapi-mcp 0.4.0 breaks on mcp 2.x):
+
+| Measurement | fastapi-mcp | fastapi-gql-mcp |
+|---|---|---|
+| tool catalog, 100 routes | ~10,950 tok (grows linearly) | ~2,480 tok simple / **~1,480 tok progressive (constant)** |
+| composed task (notes+stats) | 2 tool calls = 2 agent turns | 1 `graphql_query` |
+| same list response | 2,875 B whole payload | 610 B with field projection |
+| single trivial call (p50, same client stack, 3 runs) | **0.93 ms** | 1.25 ms — GraphQL layer costs; agent turns dominate, not ms |
+
+Honest counterexamples included: below ~5 endpoints the one-tool-per-endpoint
+catalog is actually smaller (685 vs 893 tok), and per-call latency favors
+them — the GraphQL route pays off as the API grows. Every number is
+reproducible (`comparison/README.md` → Reproduce); environment, versions and
+run counts are recorded in `results.json`.
+</details>
 
 ## How it works
 
