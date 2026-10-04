@@ -58,7 +58,10 @@ is then open instead of OAuth-protected).
    automatically, try:
 
    ```graphql
-   { notes { mine { list_notes(q: "agent") { id title owner } } } meta { stats { notes users } } }
+   { notes { mine { list_notes(q: "agent") { id title owner } } }
+     meta { stats { notes users }
+            # dict[str, Any] endpoint → JSON scalar pass-through
+            overview } }
    ```
 
    and a mutation:

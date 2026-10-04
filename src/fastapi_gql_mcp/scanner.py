@@ -169,14 +169,14 @@ def _flatten_params(
 
 
 def _body_embeds(body_params: Sequence[ParamInfo]) -> bool:
-    """Replicates fastapi.dependencies.utils._should_embed_body_fields."""
-    if len(body_params) > 1:
+    """Replicates fastapi.dependencies.utils._should_embed_body_fields
+    (JSON body params only — Form/File are not bridged): a single body
+    parameter without an explicit ``Body(embed=True)`` takes the WHOLE
+    body as its value, whatever its type (BaseModel, dict, scalar) —
+    embedding applies to multiple body params or explicit embed only."""
+    if len({p.name for p in body_params}) > 1:
         return True
-    only = body_params[0]
-    if only.embed:
-        return True
-    annotation = only.annotation
-    return not (isinstance(annotation, type) and issubclass(annotation, BaseModel))
+    return bool(body_params[0].embed)
 
 
 def _matches(path: str, patterns: Sequence[str] | None) -> bool:

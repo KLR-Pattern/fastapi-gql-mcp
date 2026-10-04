@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum, IntEnum
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import pytest
 from graphql import (
@@ -207,12 +207,20 @@ class TestObjects:
 
     def test_unsupported_type_raises(self):
         with pytest.raises(UnsupportedFieldTypeError):
-            TypeBuilder().output_type(dict[str, int])
+            TypeBuilder().output_type(set[int])  # no scalar for sets
+
+    def test_dict_maps_to_json_scalar(self):
+        from fastapi_gql_mcp.scalars import GraphQLJSON
+
+        builder = TypeBuilder()
+        assert builder.bare_output_type(dict[str, int]) is GraphQLJSON
+        assert builder.bare_output_type(dict) is GraphQLJSON
+        assert builder.input_type(dict[str, Any]) is GraphQLJSON
 
     def test_unsupported_nested_field_reports_path(self):
         class Bad(BaseModel):
             ok: int
-            payload: dict[str, int]
+            payload: set[int]  # no scalar for sets
 
         with pytest.raises(UnsupportedFieldTypeError, match=r"Bad\.payload"):
             TypeBuilder().output_type(Bad)

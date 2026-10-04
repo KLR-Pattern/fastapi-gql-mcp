@@ -208,12 +208,24 @@ class TestTypeTrials:
         app = FastAPI()
 
         @app.get("/weird")
-        async def weird() -> dict[str, int]:
-            return {}
+        async def weird() -> set[int]:
+            # Pydantic accepts it, the bridge has no scalar for it
+            return set()
 
         routes, skips = RouterScanner(app).scan()
         assert not routes
         assert any("unsupported type" in s.reason for s in skips)
+
+    def test_dict_response_bridged_as_json(self):
+        """dict/Any declare a dynamic shape — they pass through, not skip."""
+        app = FastAPI()
+
+        @app.get("/raw")
+        async def raw() -> dict[str, int]:
+            return {}
+
+        routes, skips = RouterScanner(app).scan()
+        assert len(routes) == 1 and not skips
 
     def test_skip_record_shape(self):
         rec = SkipRecord("/x", "GET", "why")

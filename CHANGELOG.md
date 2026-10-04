@@ -4,6 +4,14 @@
 
 ### Added
 
+- **JSON pass-through for dynamic shapes**: endpoints and fields annotated
+  `dict`, `dict[K, V]`, `Any` (and `list`s / model fields thereof) bridge
+  as the `JSON` scalar instead of being skipped — an author declaring a
+  dynamic shape gets reachability, not invisibility. The line drawn: an
+  explicit `dict`/`Any` annotation passes through; a route with no
+  annotation and no `response_model` still skips (no contract). Both
+  directions: a `JSON` input argument lands as the raw request body.
+
 - **`RouterMCP(auth=...)`**: optional fastmcp auth provider (e.g.
   `GitHubProvider`) passed through to `FastMCP` untouched — the MCP
   endpoint then speaks OAuth 2.1 (401 discovery, DCR, PKCE) and clients'
@@ -27,6 +35,13 @@
   carriers, with the fastmcp GitHub proxy reusing the app's OAuth callback
   via a redirect subdirectory (`auth_at_root`). Guarded by
   `tests/test_example_public_api.py`: examples import the public API only.
+
+### Fixed
+
+- Single non-model body parameters (e.g. `payload: dict[str, Any]`) were
+  wrongly wrapped as `{"payload": ...}` — FastAPI gives a lone body param
+  the WHOLE body unless `Body(embed=True)` or multiple body params are
+  involved. `_body_embeds` now replicates FastAPI's predicate exactly.
 
 ### Changed
 

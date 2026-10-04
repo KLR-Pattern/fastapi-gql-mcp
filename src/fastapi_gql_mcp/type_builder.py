@@ -41,7 +41,7 @@ from graphql import (
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from fastapi_gql_mcp.scalars import SCALAR_MAP
+from fastapi_gql_mcp.scalars import SCALAR_MAP, json_passthrough
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,8 @@ class UnsupportedFieldTypeError(TypeError):
         super().__init__(
             f"Cannot map {annotation!r} to a GraphQL type ({context}). "
             f"Supported: scalars (int/str/bool/float/datetime/date/time/UUID/Decimal), "
-            f"Enum, Literal, Optional/list combinations and nested BaseModel."
+            f"Enum, Literal, Optional/list combinations, nested BaseModel, and "
+            f"dict/Any (pass-through as the JSON scalar)."
         )
 
 
@@ -237,6 +238,10 @@ class TypeBuilder:
         if annotation in SCALAR_MAP:
             return SCALAR_MAP[annotation]
 
+        json_scalar = json_passthrough(annotation)
+        if json_scalar is not None:
+            return json_scalar
+
         raise UnsupportedFieldTypeError(annotation, context)
 
     def _object_type(self, model: type[BaseModel], context: str) -> GraphQLObjectType:
@@ -311,6 +316,10 @@ class TypeBuilder:
 
         if annotation in SCALAR_MAP:
             return SCALAR_MAP[annotation]
+
+        json_scalar = json_passthrough(annotation)
+        if json_scalar is not None:
+            return json_scalar
 
         raise UnsupportedFieldTypeError(annotation, context)
 

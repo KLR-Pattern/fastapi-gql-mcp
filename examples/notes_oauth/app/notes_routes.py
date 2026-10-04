@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from datetime import datetime, timezone
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -69,3 +70,21 @@ async def stats() -> StatsOut:
         notes=len(store.NOTES),
         users=len({n["owner"] for n in store.NOTES.values()}),
     )
+
+
+@router.get("/overview", tags=["meta"])
+async def overview() -> dict[str, Any]:
+    """Runtime overview — deliberately dynamic, assembled at call time.
+
+    ``dict[str, Any]`` declares "shape is dynamic", so the bridge passes it
+    through as the JSON scalar instead of demanding a fixed type — the
+    agent sees the live keys and can explore them.
+    """
+    return {
+        "app": "notes-oauth example",
+        "notes": {
+            "total": len(store.NOTES),
+            "owners": sorted({n["owner"] for n in store.NOTES.values()}),
+        },
+        "now": datetime.now(timezone.utc).isoformat(),
+    }

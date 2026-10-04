@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, get_origin
 
 from graphql import (
     GraphQLBoolean,
@@ -18,6 +18,7 @@ from graphql import (
     GraphQLScalarType,
     GraphQLString,
 )
+from graphql.utilities import value_from_ast_untyped
 
 GraphQLDateTime = GraphQLScalarType(
     name="DateTime",
@@ -77,3 +78,33 @@ SCALAR_MAP: dict[Any, GraphQLScalarType] = {
     uuid.UUID: GraphQLUUID,
     Decimal: GraphQLDecimal,
 }
+
+
+GraphQLJSON = GraphQLScalarType(
+    name="JSON",
+    description=(
+        "Arbitrary JSON value (object, array, string, number, boolean, null). "
+        "Bridges endpoints and fields typed `dict`/`Any`: the shape is "
+        "dynamic by the author's declaration and only known at runtime."
+    ),
+    # Values crossing the bridge are already JSON-compatible Python objects.
+    serialize=lambda value: value,
+    parse_value=lambda value: value,
+    parse_literal=value_from_ast_untyped,
+)
+
+
+def json_passthrough(annotation: Any) -> GraphQLScalarType | None:
+    """The JSON scalar when the annotation declares a dynamic shape — bare
+    ``dict``, ``dict[K, V]``/``Dict`` (GraphQL cannot express arbitrary-key
+    maps), ``Any``, or ``object``; None otherwise.
+
+    The line this draws: an explicit ``dict``/``Any`` annotation is the
+    author declaring "shape is dynamic" and deserves pass-through; a route
+    with NO annotation at all has no contract and stays skipped.
+    """
+    if annotation is Any or annotation is object or annotation is dict:
+        return GraphQLJSON
+    if get_origin(annotation) is dict:
+        return GraphQLJSON
+    return None
