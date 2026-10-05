@@ -11,23 +11,28 @@ changes you are shipping.
 1. **Decide the version.** This repo is 0.x: breaking changes bump the minor
    (0.1 → 0.2 → …), additive changes may too, fixes alone patch. Look at the
    Unreleased entries: anything marked *(breaking)* forces a minor bump.
-2. **Bump the version in THREE places** — this is the classic miss:
+2. **Bump the version in TWO places** — this is the classic miss:
 
    | File | What to change |
    |---|---|
-   | `pyproject.toml` | `version = "X.Y.Z"` |
-   | `src/fastapi_gql_mcp/__init__.py` | `__version__ = "X.Y.Z"` |
+   | `pyproject.toml` | `version = "X.Y.Z"` (+ `uv lock` to refresh the self-entry) |
    | `CHANGELOG.md` | `## Unreleased` → `## X.Y.Z (YYYY-MM-DD)` |
 
-   Verify consistency before committing:
+   `__version__` needs NO hand-edit: since 0.6.0 it is **derived from
+   installed package metadata** (`importlib.metadata`), so pyproject is the
+   single source of truth. (0.5.0 shipped with a hardcoded `__version__`
+   still at 0.4.0 — the published package reported the wrong runtime
+   version; deriving removed that release step entirely.)
+   `tests/test_version.py` fails the suite if `__version__` and pyproject
+   ever disagree again.
+
+   Verify before committing:
 
    ```bash
-   grep '^version' pyproject.toml && grep __version__ src/fastapi_gql_mcp/__init__.py
+   grep '^version' pyproject.toml
+   uv run python -c "import fastapi_gql_mcp; print(fastapi_gql_mcp.__version__)"
    # both must print the same X.Y.Z
    ```
-
-   (0.5.0 shipped with `__version__` still at 0.4.0 — the published package
-   reports the wrong runtime version. Don't repeat it.)
 
 3. **Commit**: `chore(release): X.Y.Z`, one-line summary of the wave.
 4. **Tag and push**:
@@ -77,8 +82,9 @@ changes you are shipping.
 - **PyPI token**: `PYPI_PUBLISHER` in repo secrets. First release of a new
   project name needs an account-wide token; afterwards rotate to a
   project-scoped one. Also claim the project on PyPI after first publish.
-- **`__version__` consistency** is part of the release definition of done
-  (step 2) — the wheel's runtime string must match the tag.
+- **`__version__` consistency** is enforced by `tests/test_version.py`
+  (derived from package metadata; pyproject is the single source) — the
+  wheel's runtime string must match the tag.
 - **CHANGELOG discipline**: entries land in Unreleased as they ship, not in
   a batch at release time; each entry says *what changed and why*, breaking
   changes are marked *(breaking)*.

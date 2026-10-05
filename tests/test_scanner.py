@@ -316,10 +316,9 @@ class TestJsonFallbackNotices:
 
     def test_nested_union_field_notice_names_the_field(self, caplog):
         import logging
-        from typing import Union
 
         class Wrapped(BaseModel):
-            result: Union[ItemOut, TestJsonFallbackNotices.Err]
+            result: ItemOut | TestJsonFallbackNotices.Err
 
         app = FastAPI()
 

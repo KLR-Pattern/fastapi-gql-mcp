@@ -2,13 +2,7 @@
 
 ## Unreleased
 
-### Fixed
-
-- `__version__` was left at 0.4.0 when 0.5.0 shipped — the published
-  package reported the wrong runtime version. Now synced (the three-place
-  bump is spelled out in AGENTS.md).
-- Example: `legacy_stats` returned a coroutine (`return stats()` without
-  `await`), so the deprecation showcase route failed validation.
+## 0.6.0 (2026-10-06)
 
 ### Added
 
@@ -34,6 +28,12 @@
 
 ### Fixed
 
+- `__version__` is now derived from installed package metadata instead of
+  a hardcoded copy — the copy was left at 0.4.0 when 0.5.0 shipped, and
+  the published package reported the wrong runtime version. pyproject is
+  the single source of truth; a drift test pins it.
+- Example: `legacy_stats` returned a coroutine (`return stats()` without
+  `await`), so the deprecation showcase route failed validation.
 - Routes using response-filtering serialization kwargs
   (`response_model_exclude_unset` / `_exclude_defaults` / `_include` /
   `_exclude` / `by_alias=False`) no longer break at runtime: the schema

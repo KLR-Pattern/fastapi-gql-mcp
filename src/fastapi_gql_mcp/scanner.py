@@ -15,9 +15,9 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from fastapi import FastAPI
-from fastapi.params import File, Form
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import get_typed_return_annotation
+from fastapi.params import File, Form
 from fastapi.responses import Response
 from fastapi.routing import APIRoute
 from fastapi.utils import DefaultPlaceholder  # type: ignore[attr-defined]

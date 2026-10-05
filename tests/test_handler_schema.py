@@ -5,8 +5,8 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from fastapi_gql_mcp.handler import GQLMCPConfigError, RouterGraphQLHandler
-from fastapi_gql_mcp.schema_builder import DuplicateArgError
 from fastapi_gql_mcp.scanner import RouterScanner
+from fastapi_gql_mcp.schema_builder import DuplicateArgError
 from fastapi_gql_mcp.type_builder import TypeBuilder
 
 
