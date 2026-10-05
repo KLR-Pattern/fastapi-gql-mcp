@@ -1,0 +1,323 @@
+"""Parameter-shape matrix: every FastAPI input flavor, scanned, schema'd and
+executed end-to-end.
+
+One route per parameter form — path (int/str/uuid, convertors live in
+test_invoker's B1 suite), query (plain/list/alias/exotic scalars/parameter
+models), body (single model/dict, multi-embed, embed=True, optional,
+list, scalar), optional header/cookie — plus the two by-design skips
+(Form/File, query-model-mixed). This matrix found the custom-scalar-in-body
+JSON serialization bug; it guards scanner + invoker against regressions in
+any parameter shape.
+
+Note for readers hitting "Field must not have a selection": routes typed
+``-> dict`` map to the JSON scalar, which takes NO sub-selection — queries
+here select the field bare and assert on the returned dict.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Callable
+from datetime import date, datetime
+from decimal import Decimal
+from enum import Enum
+from typing import Annotated, Any
+
+import pytest
+from fastapi import Body, Cookie, FastAPI, File, Form, Header, Query
+from pydantic import BaseModel, Field
+
+from fastapi_gql_mcp import RouterGraphQLHandler
+
+_UUID = "12345678-1234-5678-1234-567812345678"
+
+
+class Color(Enum):
+    red = "red"
+    blue = "blue"
+
+
+class ItemIn(BaseModel):
+    name: str
+    price: Decimal = Field(default="9.9", description="价格")
+
+
+class Filter(BaseModel):
+    q: str | None = None
+    limit: int = 10
+
+
+def build_app() -> FastAPI:
+    app = FastAPI()
+
+    # ---- path ----
+    @app.get("/p1/{item_id}", tags=["t1"])
+    async def path_int(item_id: int) -> dict:
+        return {"v": item_id}
+
+    @app.get("/p2/{name}", tags=["t1"])
+    async def path_str(name: str) -> dict:
+        return {"v": name}
+
+    @app.get("/p3/{uid}", tags=["t1"])
+    async def path_uuid(uid: uuid.UUID) -> dict:
+        return {"v": str(uid)}
+
+    # ---- query ----
+    @app.get("/r1", tags=["t2"])
+    async def q_plain_opt(limit: int = 5, active: bool = True) -> dict:
+        return {"limit": limit, "active": active}
+
+    @app.get("/r2", tags=["t2"])
+    async def q_required(q: str) -> dict:
+        return {"v": q}
+
+    @app.get("/r3", tags=["t2"])
+    async def q_list(tag: list[str] = Query(default=[])) -> dict:
+        return {"v": tag}
+
+    @app.get("/r4", tags=["t2"])
+    async def q_alias(q_limit: Annotated[int, Query(alias="limit")] = 7) -> dict:
+        return {"v": q_limit}
+
+    @app.get("/r5", tags=["t2"])
+    async def q_desc(limit: Annotated[int, Query(description="max rows")] = 3) -> dict:
+        return {"v": limit}
+
+    @app.get("/r6", tags=["t2"])
+    async def q_scalars(
+        d: date | None = None,
+        ts: datetime | None = None,
+        uid2: uuid.UUID | None = None,
+        c: Color | None = None,
+        n: Decimal | None = None,
+    ) -> dict:
+        return {
+            "d": str(d),
+            "ts": str(ts),
+            "uid": str(uid2),
+            "c": c.value if c else None,
+            "n": str(n),
+        }
+
+    @app.get("/r7", tags=["t2"])
+    async def q_model(f: Annotated[Filter, Query()]) -> dict:
+        return {"q": f.q, "limit": f.limit}
+
+    @app.get("/r8", tags=["t2"])
+    async def q_model_mixed(f: Annotated[Filter, Query()], plain: int = 1) -> dict:
+        return {"kind": "mixed"}
+
+    # ---- body ----
+    @app.post("/s1", tags=["t3"])
+    async def b_single_model(payload: ItemIn) -> dict:
+        return {"name": payload.name, "price": str(payload.price)}
+
+    @app.post("/s2", tags=["t3"])
+    async def b_single_dict(payload: dict[str, Any]) -> dict:
+        return {"v": payload}
+
+    @app.post("/s3", tags=["t3"])
+    async def b_multi(a: ItemIn, note: str) -> dict:
+        return {"name": a.name, "note": note}
+
+    @app.post("/s4", tags=["t3"])
+    async def b_embed(payload: Annotated[ItemIn, Body(embed=True)]) -> dict:
+        return {"name": payload.name}
+
+    @app.post("/s5", tags=["t3"])
+    async def b_optional(payload: ItemIn | None = None) -> dict:
+        return {"name": payload.name if payload else None}
+
+    @app.post("/s6", tags=["t3"])
+    async def b_list(items: list[ItemIn]) -> dict:
+        return {"n": len(items)}
+
+    @app.post("/s7", tags=["t3"])
+    async def b_scalar(note: str) -> dict:
+        return {"note": note}
+
+    # ---- optional header / cookie ----
+    @app.get("/o1", tags=["t4"])
+    async def opt_header(x_opt: Annotated[str | None, Header()] = None) -> dict:
+        return {"v": x_opt}
+
+    @app.get("/o2", tags=["t4"])
+    async def opt_cookie(sid: Annotated[str | None, Cookie()] = None) -> dict:
+        return {"v": sid}
+
+    # ---- Form/File: by-design skip ----
+    @app.post("/ff", tags=["t5"])
+    async def upload(name: Annotated[str, Form()], f: Annotated[bytes, File()]) -> dict:
+        return {"name": name, "size": len(f)}
+
+    return app
+
+
+# (id, GraphQL document, leaf predicate) — field names are the ENDPOINT
+# FUNCTION names; domains come from the tags (t1..t4).
+CASES: list[tuple[str, str, str, Callable[[dict], bool]]] = [
+    (
+        "path-int",
+        "{ t1 { path_int(item_id: 42) } }",
+        "t1",
+        lambda r: r["v"] == 42,
+    ),
+    (
+        "path-str-unicode",
+        '{ t1 { path_str(name: "上海") } }',
+        "t1",
+        lambda r: r["v"] == "上海",
+    ),
+    (
+        "path-uuid",
+        f'{{ t1 {{ path_uuid(uid: "{_UUID}") }} }}',
+        "t1",
+        lambda r: r["v"] == _UUID,
+    ),
+    (
+        "query-optional-defaults",
+        "{ t2 { q_plain_opt } }",
+        "t2",
+        lambda r: r["limit"] == 5 and r["active"] is True,
+    ),
+    (
+        "query-required",
+        '{ t2 { q_required(q: "hi") } }',
+        "t2",
+        lambda r: r["v"] == "hi",
+    ),
+    (
+        "query-list",
+        '{ t2 { q_list(tag: ["a", "b"]) } }',
+        "t2",
+        lambda r: sorted(r["v"]) == ["a", "b"],
+    ),
+    (
+        "query-alias",
+        "{ t2 { q_alias(limit: 9) } }",
+        "t2",
+        lambda r: r["v"] == 9,
+    ),
+    (
+        "query-description",
+        "{ t2 { q_desc(limit: 1) } }",
+        "t2",
+        lambda r: r["v"] == 1,
+    ),
+    (
+        "query-exotic-scalars",
+        f'{{ t2 {{ q_scalars(d: "2026-10-05", uid2: "{_UUID}", c: red, n: "1.5") }} }}',
+        "t2",
+        lambda r: r["d"] == "2026-10-05" and r["c"] == "red" and r["n"] == "1.5",
+    ),
+    (
+        "query-model-expanded",
+        "{ t2 { q_model(q: \"x\", limit: 2) } }",
+        "t2",
+        lambda r: r["q"] == "x" and r["limit"] == 2,
+    ),
+    (
+        "body-single-model",
+        'mutation { t3 { b_single_model(payload: {name: "n", price: "3.5"}) } }',
+        "t3",
+        lambda r: r["name"] == "n" and r["price"] == "3.5",
+    ),
+    (
+        "body-single-dict",
+        "mutation { t3 { b_single_dict(payload: {k: 1}) } }",
+        "t3",
+        lambda r: r["v"] == {"k": 1},
+    ),
+    (
+        "body-multi-embedded",
+        'mutation { t3 { b_multi(a: {name: "m"}, note: "x") } }',
+        "t3",
+        lambda r: r["name"] == "m" and r["note"] == "x",
+    ),
+    (
+        "body-embed-true",
+        'mutation { t3 { b_embed(payload: {name: "e"}) } }',
+        "t3",
+        lambda r: r["name"] == "e",
+    ),
+    (
+        "body-optional-omitted",
+        "mutation { t3 { b_optional } }",
+        "t3",
+        lambda r: r["name"] is None,
+    ),
+    (
+        "body-list-of-models",
+        'mutation { t3 { b_list(items: [{name: "a"}, {name: "b"}]) } }',
+        "t3",
+        lambda r: r["n"] == 2,
+    ),
+    (
+        "body-single-scalar",
+        'mutation { t3 { b_scalar(note: "s") } }',
+        "t3",
+        lambda r: r["note"] == "s",
+    ),
+    (
+        "optional-header-defaults",
+        "{ t4 { opt_header } }",
+        "t4",
+        lambda r: r["v"] is None,
+    ),
+    (
+        "optional-cookie-defaults",
+        "{ t4 { opt_cookie } }",
+        "t4",
+        lambda r: r["v"] is None,
+    ),
+]
+
+
+@pytest.fixture
+async def handler():
+    h = RouterGraphQLHandler(build_app(), allow_mutation=True)
+    yield h
+    await h.aclose()
+
+
+class TestByDesignSkips:
+    def test_form_file_skipped(self, handler: RouterGraphQLHandler):
+        upload_skips = [s for s in handler.skips if s.path == "/ff"]
+        assert len(upload_skips) == 1
+        assert "unsupported type" in upload_skips[0].reason
+
+    def test_query_model_mixed_skipped(self, handler: RouterGraphQLHandler):
+        mixed_skips = [s for s in handler.skips if s.path == "/r8"]
+        assert len(mixed_skips) == 1
+        assert "mixed with plain query parameters" in mixed_skips[0].reason
+
+    def test_no_other_skips(self, handler: RouterGraphQLHandler):
+        """Everything else in the matrix must be in the schema — a new
+        unexpected skip is a regression."""
+        unexpected = [
+            s.path for s in handler.skips if s.path not in {"/ff", "/r8"}
+        ]
+        assert unexpected == []
+
+
+class TestParameterMatrix:
+    @pytest.mark.parametrize(
+        "label,query,domain,predicate",
+        CASES,
+        ids=[c[0] for c in CASES],
+    )
+    async def test_case(
+        self,
+        handler: RouterGraphQLHandler,
+        label: str,
+        query: str,
+        domain: str,
+        predicate: Callable[[dict], bool],
+    ):
+        result = await handler.execute(query)
+        assert "errors" not in result, f"{label}: {result.get('errors')}"
+        node = result["data"][domain]
+        leaf = next(iter(node.values()))
+        assert leaf is not None, f"{label}: field nulled"
+        assert predicate(leaf), f"{label}: value mismatch: {leaf}"
