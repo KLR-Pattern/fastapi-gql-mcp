@@ -14,6 +14,16 @@
 
 ### Fixed
 
+- Form/File routes are now skipped at scan time with an explicit reason
+  ("form/file parameter 'x' cannot be bridged"). Previously a Form-only
+  endpoint whose annotations were valid GraphQL scalars (`Annotated[str,
+  Form()]`) slipped into the schema and always failed at runtime with 422
+  (the invoker sends JSON bodies); File-based routes were skipped only by
+  coincidence (`bytes`/`UploadFile` having no GraphQL mapping), not by an
+  explicit rule. Side effect: the OAuth token endpoint (form-encoded
+  credentials) can no longer leak into the schema without an exclude —
+  the leak is now structurally impossible, with the exclude glob remaining
+  defense-in-depth.
 - Request bodies (and body-bound variables) carrying custom-scalar fields —
   `Decimal`, `UUID`, `datetime`/`date`/`time`, at any nesting depth —
   crashed at the wire with "Object of type Decimal is not JSON

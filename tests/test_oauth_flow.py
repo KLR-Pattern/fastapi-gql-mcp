@@ -211,13 +211,20 @@ class TestProtocolEndpointsExcluded:
         assert "issue_token" not in sdl
         assert "Mutation" not in sdl  # nothing else is a write route
 
-    def test_without_exclude_the_token_endpoint_leaks_in(self):
-        """The exclusion is a choice, and this is what it prevents: with
-        mutations enabled and no exclude, the token endpoint becomes an
-        agent-visible mutation."""
+    def test_without_exclude_the_token_endpoint_cannot_leak(self):
+        """Before form/file routes were skipped at scan time, the token
+        endpoint (OAuth2PasswordRequestForm = form-encoded credentials)
+        DID leak into the schema without an exclude — as a mutation that
+        always 422ed (the invoker speaks JSON). The Form skip now prevents
+        that leak structurally; the exclude glob remains defense-in-depth
+        for future non-form protocol routes."""
         app = build_app()
         mcp = RouterMCP(app, name="leaky", allow_mutation=True)
-        assert "issue_token" in mcp.handler.get_sdl()
+        assert "issue_token" not in mcp.handler.get_sdl()
+        assert any(
+            s.path == "/oauth/token" and "form/file parameter" in s.reason
+            for s in mcp.handler.skips
+        )
 
 
 class TestBadCredentialsAtAuthorizationServer:

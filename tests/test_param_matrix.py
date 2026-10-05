@@ -285,7 +285,8 @@ class TestByDesignSkips:
     def test_form_file_skipped(self, handler: RouterGraphQLHandler):
         upload_skips = [s for s in handler.skips if s.path == "/ff"]
         assert len(upload_skips) == 1
-        assert "unsupported type" in upload_skips[0].reason
+        # 'name' (the Form param) is reported first; params scan in order
+        assert "form/file parameter 'name'" in upload_skips[0].reason
 
     def test_query_model_mixed_skipped(self, handler: RouterGraphQLHandler):
         mixed_skips = [s for s in handler.skips if s.path == "/r8"]

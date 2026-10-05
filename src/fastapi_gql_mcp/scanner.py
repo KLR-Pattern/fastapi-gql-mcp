@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.params import File, Form
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import get_typed_return_annotation
 from fastapi.responses import Response
@@ -330,6 +331,19 @@ class RouterScanner:
                     )
                     return None
         for p in body_p:
+            # Form/File bodies are deliberately not bridged: the invoker
+            # speaks JSON, and MCP tool arguments have no file channel
+            # (SEP-2631 is the protocol-level fix, still draft). Skip must
+            # happen HERE — a Form-only scalar annotation (str/int/...) is a
+            # perfectly valid GraphQL input, so the type check below would
+            # let the route through into a field that always 422s.
+            if isinstance(p.field_info, Form | File):
+                name = p.validation_alias or p.alias or p.name
+                skip(
+                    f"form/file parameter '{name}' cannot be bridged "
+                    f"(the invoker sends JSON bodies only)"
+                )
+                return None
             annotation = p.field_info.annotation
             if annotation is None:
                 skip("body parameter without a typed annotation")

@@ -160,6 +160,24 @@ class TestSkips:
         _, skips = scan(build_app())
         assert any("header/cookie" in r for r in skip_reasons(skips, "/needs-header"))
 
+    def test_form_only_scalar_skipped(self):
+        """G12 regression: Annotated[str, Form()] has a perfectly valid
+        GraphQL annotation, so the type check alone would let it through
+        into a field that always 422s at runtime (invoker sends JSON)."""
+        from fastapi import Form
+
+        app = FastAPI()
+
+        @app.post("/ff", response_model=ItemOut)
+        async def ff(name: Annotated[str, Form()]):
+            return ItemOut(id=1, name=name)
+
+        routes, skips = scan(app, allow_mutation=True)
+        assert routes == []
+        assert any(
+            "form/file parameter 'name'" in r for r in skip_reasons(skips, "/ff")
+        )
+
     def test_optional_header_does_not_trigger_header_skip(self):
         # Optional headers are simply not sent; the route is skipped for its
         # untyped response instead, never for the optional header itself.
