@@ -15,7 +15,7 @@ import json
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
@@ -178,6 +178,88 @@ class TestExecuteChain:
 
         alice, bob = await asyncio.gather(as_user("jwt-alice"), as_user("jwt-bob"))
         assert (alice, bob) == ("alice", "bob")
+
+
+class TestAuthPassthroughAdversarial:
+    """Reddit feedback (r/mcp): pin the auth-passthrough claim adversarially.
+
+    1. Warm the document cache with one caller, then let a SECOND caller's
+       token expire: on the shared cache-hit path the expired caller must
+       fail authentication while the other still gets only their own data —
+       the compile cache must never carry credentials.
+    2. One document mixing an allowed endpoint with a forbidden one: assert
+       BOTH the surviving data and the field-level error."""
+
+    @staticmethod
+    def _app(state: dict) -> FastAPI:
+        app = FastAPI()
+
+        @app.get("/whoami", response_model=WhoOut, tags=["iam"])
+        async def whoami(
+            authorization: str | None = Header(default=None),
+        ) -> WhoOut:
+            token = authorization.removeprefix("Bearer ").strip() if authorization else ""
+            if token not in state["valid"]:
+                raise HTTPException(status_code=401, detail="expired or invalid token")
+            return WhoOut(user=state["users"][token])
+
+        @app.get("/secrets", response_model=NoteOut, tags=["iam"])
+        async def secrets(
+            authorization: str | None = Header(default=None),
+        ) -> NoteOut:
+            token = authorization.removeprefix("Bearer ").strip() if authorization else ""
+            if token not in state["valid"]:
+                raise HTTPException(status_code=401, detail="expired or invalid token")
+            if state["users"][token] != "admin":
+                raise HTTPException(status_code=403, detail="admin only")
+            return NoteOut(author="admin", text="42")
+
+        return app
+
+    @staticmethod
+    def _state() -> dict:
+        return {
+            "valid": {"tok-alice", "tok-admin"},
+            "users": {"tok-alice": "alice", "tok-admin": "admin"},
+        }
+
+    async def test_cache_hit_with_expired_token_isolates_callers(self):
+        state = self._state()
+        handler = RouterGraphQLHandler(self._app(state))
+        query = "{ iam { whoami { user } } }"
+
+        # Warm the compile cache as alice (token still valid)...
+        warm = await handler.execute(query, headers={"authorization": "Bearer tok-alice"})
+        assert warm["data"]["iam"]["whoami"] == {"user": "alice"}
+
+        # ...then alice's token expires AFTER the cache was warmed.
+        state["valid"].discard("tok-alice")
+
+        # Same DOCUMENT (compile cache HIT for both), different credentials,
+        # launched concurrently.
+        async def as_token(token: str):
+            return await handler.execute(query, headers={"authorization": f"Bearer {token}"})
+
+        alice, admin = await asyncio.gather(as_token("tok-alice"), as_token("tok-admin"))
+        assert alice["data"]["iam"]["whoami"] is None
+        assert alice["errors"][0]["extensions"]["code"] == "HTTP_401"
+        assert admin["data"]["iam"]["whoami"] == {"user": "admin"}
+        assert "errors" not in admin
+        await handler.aclose()
+
+    async def test_mixed_allowed_and_forbidden_in_one_document(self):
+        state = self._state()
+        handler = RouterGraphQLHandler(self._app(state))
+        result = await handler.execute(
+            "{ iam { whoami { user } secrets { text } } }",
+            headers={"authorization": "Bearer tok-alice"},  # member, not admin
+        )
+        # The allowed sibling survives; only the forbidden field nulls itself.
+        assert result["data"]["iam"]["whoami"] == {"user": "alice"}
+        assert result["data"]["iam"]["secrets"] is None
+        assert result["errors"][0]["extensions"]["code"] == "HTTP_403"
+        assert len(result["errors"]) == 1
+        await handler.aclose()
 
 
 # --------------------------------------------------------------- MCP e2e
