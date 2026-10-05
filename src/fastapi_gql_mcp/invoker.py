@@ -13,7 +13,11 @@ import logging
 import time
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
+from datetime import date, datetime
+from datetime import time as dt_time
+from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from asgi_lifespan import LifespanManager
 from graphql import GraphQLError
@@ -145,6 +149,12 @@ def build_request(
             json_body = {p.name: kwargs.get(p.name) for p in route.body_params}
         else:
             json_body = kwargs.get(route.body_params[0].name)
+        # The custom scalars' parse_value produces typed Python objects
+        # (Decimal/UUID/datetime...) inside resolver kwargs; json.dumps cannot
+        # encode them. Query/path params are already stringified by
+        # _render_param — the body (and anything under it, e.g. variables)
+        # gets the same wire conversion here.
+        json_body = _json_safe(json_body)
 
     headers = dict(_BASE_HEADERS)
     if json_body is not None:
@@ -159,6 +169,25 @@ def build_request(
         json_body=json_body,
         headers=headers,
     )
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert typed scalar objects to their JSON wire forms, recursively.
+
+    FastAPI/pydantic re-parses these strings on the receiving side, so the
+    round trip is lossless for the app.
+    """
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, datetime | date | dt_time):
+        return value.isoformat()
+    return value
 
 
 def _render_param(value: Any) -> Any:

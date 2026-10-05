@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.1 (unreleased-ish — or fold into next)
+
+### Fixed
+
+- Request bodies (and body-bound variables) carrying custom-scalar fields —
+  `Decimal`, `UUID`, `datetime`/`date`/`time`, at any nesting depth —
+  crashed at the wire with "Object of type Decimal is not JSON
+  serializable": the scalars' parse_value produces typed Python objects
+  inside resolver kwargs, and json.dumps cannot encode them. The invoker
+  now converts them to their JSON wire forms at the request boundary
+  (query/path params were already stringified). Found by a 19-case
+  parameter-shape matrix probe.
+
 ## 0.5.0 (2026-10-05)
 
 ### Added

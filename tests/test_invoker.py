@@ -341,3 +341,66 @@ class TestConcurrencyLimits:
 
         with pytest.raises(ValueError, match="max_concurrency"):
             RouterGraphQLHandler(self._fanout_app(1, {}), max_concurrency=0)
+
+
+class TestScalarBodyRoundTrip:
+    """Custom scalars' parse_value yields typed objects (Decimal/UUID/
+    datetime); the body must cross json.dumps — regression for the
+    "Object of type Decimal is not JSON serializable" field error."""
+
+    @staticmethod
+    def _app() -> FastAPI:
+        from datetime import datetime
+        from decimal import Decimal
+        from uuid import UUID
+
+        from pydantic import BaseModel
+
+        app = FastAPI()
+
+        class Payment(BaseModel):
+            amount: Decimal
+            ref: UUID
+            at: datetime
+            lines: list[Decimal] = []
+
+        @app.get("/ping", response_model=dict, tags=["misc"])
+        async def ping() -> dict:
+            return {"ok": True}
+
+        @app.post("/pay", response_model=dict, tags=["misc"])
+        async def pay(payload: Payment) -> dict:
+            return {
+                "amount": str(payload.amount),
+                "ref": str(payload.ref),
+                "at": payload.at.isoformat(),
+                "n_lines": len(payload.lines),
+            }
+
+        return app
+
+    async def test_body_with_decimal_uuid_datetime(self):
+        from fastapi_gql_mcp.handler import RouterGraphQLHandler
+
+        handler = RouterGraphQLHandler(self._app(), allow_mutation=True)
+        result = await handler.execute(
+            'mutation { misc { pay(payload: {'
+            'amount: "12.34", '
+            'ref: "12345678-1234-5678-1234-567812345678", '
+            'at: "2026-10-05T10:00:00Z", '
+            'lines: ["1.5", "2.5"]'
+            '}) } }'
+        )
+        assert result == {
+            "data": {
+                "misc": {
+                    "pay": {
+                        "amount": "12.34",
+                        "ref": "12345678-1234-5678-1234-567812345678",
+                        "at": "2026-10-05T10:00:00+00:00",
+                        "n_lines": 2,
+                    }
+                }
+            }
+        }
+        await handler.aclose()
