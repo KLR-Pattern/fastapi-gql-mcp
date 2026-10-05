@@ -33,7 +33,11 @@ from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
 from fastapi_gql_mcp.naming import DuplicateFieldError
 from fastapi_gql_mcp.scalars import GraphQLJSON
 from fastapi_gql_mcp.scanner import ParamInfo, RouteInfo
-from fastapi_gql_mcp.type_builder import TypeBuilder
+from fastapi_gql_mcp.type_builder import (
+    TypeBuilder,
+    union_member_names,
+    union_members,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,17 +99,27 @@ def _leaf_field(
     # several routes in one query keep the other results. A NonNull field
     # error would null the whole response per GraphQL spec.
     description = route.description
+    notes: list[str] = []
     if route.response_filter:
         # Serialization filters (exclude_unset/include/...) reshape the JSON
         # after validation, so per-field promises cannot hold: bridge the
         # response as a raw JSON blob (no field selection) instead of skipping
         # the route, and tell agents why.
-        note = (
+        notes.append(
             "Returns a raw JSON blob without field selection: this route "
             f"filters its response via {route.response_filter}, so the "
             "GraphQL schema makes no per-field promises."
         )
-        description = f"{description}\n\n{note}" if description else note
+    if union_members(route.response_annotation) is not None:
+        names = ", ".join(union_member_names(route.response_annotation))
+        notes.append(
+            f"Returns raw JSON whose shape is one of: {names} — union "
+            "responses vary at runtime; select the field bare and inspect "
+            "the result."
+        )
+    if notes:
+        description = "\n\n".join([d for d in (description, *notes) if d])
+    if route.response_filter or union_members(route.response_annotation) is not None:
         response_type: Any = GraphQLJSON
     else:
         response_type = types.bare_output_type(

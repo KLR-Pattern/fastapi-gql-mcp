@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from fastapi_gql_mcp.handler import GQLMCPConfigError, RouterGraphQLHandler
 from fastapi_gql_mcp.schema_builder import DuplicateArgError
+from fastapi_gql_mcp.scanner import RouterScanner
 from fastapi_gql_mcp.type_builder import TypeBuilder
 
 
@@ -404,6 +405,104 @@ class TestResponseFilterPassthrough:
         handler = RouterGraphQLHandler(app)
         assert "sub: JSON" in handler.get_sdl()
         await handler.aclose()
+
+
+class TestUnionFallback:
+    """Non-Optional unions (``Item | Error``) pick their member at runtime,
+    so the bridge falls back to the JSON scalar instead of skipping the
+    route — with FIELD-level granularity: only the union part degrades,
+    the surrounding model stays selectable. A real GraphQLUnionType with
+    resolve_type remains a future upgrade; JSON never blocks it. Input-side
+    (request body) unions still skip: GraphQL has no input unions."""
+
+    class Err(BaseModel):
+        code: int
+        message: str
+
+    @staticmethod
+    def _handler() -> RouterGraphQLHandler:
+        union = ItemOut | TestUnionFallback.Err
+
+        class Wrapped(BaseModel):
+            result: union  # type: ignore[valid-type]
+
+        app = FastAPI()
+
+        @app.get("/risky", tags=["u"])
+        async def risky(ok: bool = True) -> union:  # type: ignore[valid-type]
+            return (
+                ItemOut(id=1, name="n")
+                if ok
+                else TestUnionFallback.Err(code=400, message="bad")
+            )
+
+        @app.get("/wrapped", response_model=Wrapped, tags=["u"])
+        async def wrapped() -> Wrapped:
+            return Wrapped(result=ItemOut(id=2, name="w"))
+
+        @app.get("/mixed", tags=["u"])
+        async def mixed() -> list[union]:  # type: ignore[valid-type]
+            return [ItemOut(id=3, name="m"), TestUnionFallback.Err(code=404, message="x")]
+
+        @app.get("/scalar-union", tags=["u"])
+        async def scalar_union() -> int | str:
+            return 7
+
+        return RouterGraphQLHandler(app)
+
+    def test_three_shapes_bridged_not_skipped(self):
+        handler = self._handler()
+        assert handler.skips == []
+        sdl = handler.get_sdl()
+        assert "risky(ok: Boolean = true): JSON" in sdl
+        assert "result: JSON!" in sdl       # field-level: only the union degrades
+        assert "mixed: [JSON!]" in sdl
+        assert "scalar_union: JSON" in sdl  # scalar unions ride the same fallback
+
+    def test_descriptions_name_the_members(self):
+        sdl = self._handler().get_sdl()
+        assert "shape is one of: ItemOut, Err" in sdl           # route-level note
+        assert "shape is one of: ItemOut, Err (union field" in sdl  # nested-field note
+
+    async def test_union_route_executes_both_members(self):
+        handler = self._handler()
+        result = await handler.execute(
+            "{ u { risky(ok: false) wrapped { result } mixed } }"
+        )
+        assert result == {
+            "data": {
+                "u": {
+                    "risky": {"code": 400, "message": "bad"},
+                    "wrapped": {"result": {"id": 2, "name": "w"}},
+                    "mixed": [
+                        {"id": 3, "name": "m"},
+                        {"code": 404, "message": "x"},
+                    ],
+                }
+            }
+        }
+        await handler.aclose()
+
+    def test_optional_union_stays_nullable_json(self):
+        from fastapi_gql_mcp.type_builder import TypeBuilder
+
+        assert render_type(TypeBuilder().output_type(int | str | None)) == "JSON"
+
+    def test_input_side_union_still_unsupported(self):
+        """Request-body unions keep skipping: GraphQL has no input unions."""
+        app = FastAPI()
+
+        @app.post("/u", tags=["u"])
+        async def create(payload: ItemOut | TestUnionFallback.Err) -> dict:
+            return {"ok": True}
+
+        routes, skips = RouterScanner(app, allow_mutation=True).scan()
+        assert routes == []
+        assert any("Cannot map" in s.reason for s in skips)
+
+
+def render_type(t) -> str:
+    return str(t)
 
 
 class TestDeprecation:

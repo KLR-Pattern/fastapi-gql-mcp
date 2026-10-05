@@ -12,6 +12,15 @@
 
 ### Added
 
+- Non-Optional union responses (`-> Item | Error`, OpenAPI 3.1 oneOf style)
+  now bridge as the JSON scalar instead of vanishing: which member arrives
+  is a runtime decision, so the field carries no per-member promises —
+  descriptions name the possible shapes ("raw JSON whose shape is one of:
+  Item, Error"). Granularity is field-level: a union nested in a response
+  model degrades only that field (`result: JSON!`), the rest stays
+  selectable. Previously these routes (and any route with a union-typed
+  field) were skipped entirely with "unsupported type". Request-body unions
+  still skip — GraphQL has no input unions.
 - Routes marked `deprecated=True` now map onto GraphQL-native deprecation:
   the field carries `@deprecated(reason: ...)` in the SDL, disappears from
   default introspection listings (`includeDeprecated: true` still shows

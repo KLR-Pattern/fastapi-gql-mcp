@@ -51,7 +51,7 @@ from graphql import (
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from fastapi_gql_mcp.scalars import SCALAR_MAP, json_passthrough
+from fastapi_gql_mcp.scalars import SCALAR_MAP, GraphQLJSON, json_passthrough
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +105,27 @@ def is_optional_annotation(annotation: Any) -> bool:
     if origin is Union or origin is types.UnionType:
         return type(None) in get_args(annotation)
     return False
+
+
+def union_members(annotation: Any) -> list[Any] | None:
+    """Members of a NON-Optional union (2+ after stripping None), else None.
+
+    ``Item | Error`` and ``Item | Error | None`` are unions whose runtime
+    member varies; ``X | None`` is plain Optional and not a union here.
+    """
+    annotation = strip_annotated(annotation)
+    origin = get_origin(annotation)
+    if origin is Union or origin is types.UnionType:
+        members = [a for a in get_args(annotation) if a is not type(None)]
+        if len(members) >= 2:
+            return members
+    return None
+
+
+def union_member_names(annotation: Any) -> list[str]:
+    """Renderable member names for union documentation notes."""
+    members = union_members(annotation) or []
+    return [getattr(m, "__name__", str(m)) for m in members]
 
 
 def unwrap_optional(annotation: Any) -> Any:
@@ -312,6 +333,13 @@ class TypeBuilder:
         if scalar is not None:
             return scalar
 
+        # Union fallback: which member arrives is a runtime decision, so the
+        # shape is not statically promisable — bridge the whole union as the
+        # JSON scalar (agent selects the field bare). A GraphQLUnionType with
+        # resolve_type remains a future upgrade path; JSON never blocks it.
+        if union_members(annotation) is not None:
+            return GraphQLJSON
+
         if isinstance(annotation, type):
             if issubclass(annotation, Enum):
                 return self._enum_type(annotation)
@@ -364,7 +392,15 @@ class TypeBuilder:
             gname = sanitize_graphql_name(json_name, what=f"{model.__name__} field")
             annotation = resolve_annotation(info.annotation, ns)
             gtype = self.output_type(annotation, context=f"{model.__name__}.{field_name}")
-            fields[gname] = GraphQLField(gtype, description=_field_description(info, annotation))
+            description = _field_description(info, annotation)
+            if union_members(annotation) is not None:
+                names = ", ".join(union_member_names(annotation))
+                note = (
+                    f"Raw JSON whose shape is one of: {names} (union field — "
+                    "select bare; GraphQL cannot promise one member)."
+                )
+                description = f"{description}\n\n{note}" if description else note
+            fields[gname] = GraphQLField(gtype, description=description)
         if not fields:
             raise UnsupportedFieldTypeError(model, f"{model.__name__} has no usable fields")
         return fields
