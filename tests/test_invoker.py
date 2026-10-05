@@ -343,6 +343,67 @@ class TestConcurrencyLimits:
             RouterGraphQLHandler(self._fanout_app(1, {}), max_concurrency=0)
 
 
+class TestSameRouteAliasFanout:
+    """One route queried several times via aliases: each alias resolves the
+    SAME stateless resolver closure with its own kwargs (build_request is
+    pure), so an aliased selection on one route fans out exactly like
+    distinct-route siblings — concurrently, semaphore-bounded."""
+
+    @staticmethod
+    def _app(state: dict) -> FastAPI:
+        import asyncio
+
+        class Item(BaseModel):
+            item_id: int
+
+        app = FastAPI()
+
+        @app.get("/items/{item_id}", response_model=Item, tags=["shop"])
+        async def get_item(item_id: int) -> Item:
+            state["current"] += 1
+            state["peak"] = max(state["peak"], state["current"])
+            await asyncio.sleep(0.15)
+            state["current"] -= 1
+            return Item(item_id=item_id)
+
+        return app
+
+    @staticmethod
+    def _aliased(n: int) -> str:
+        fields = " ".join(f"x{i}: get_item(item_id: {i}) {{ item_id }}" for i in range(n))
+        return f"{{ shop {{ {fields} }} }}"
+
+    async def test_aliases_concurrent_and_isolated(self):
+        from fastapi_gql_mcp.handler import RouterGraphQLHandler
+
+        state = {"current": 0, "peak": 0}
+        handler = RouterGraphQLHandler(self._app(state))
+        result = await handler.execute(self._aliased(3))
+        assert result == {
+            "data": {
+                "shop": {
+                    "x0": {"item_id": 0},
+                    "x1": {"item_id": 1},
+                    "x2": {"item_id": 2},
+                }
+            }
+        }
+        assert state["peak"] == 3, "aliased siblings should resolve concurrently"
+        await handler.aclose()
+
+    async def test_alias_fanout_bounded_by_max_concurrency(self):
+        from fastapi_gql_mcp.handler import RouterGraphQLHandler
+
+        state = {"current": 0, "peak": 0}
+        handler = RouterGraphQLHandler(self._app(state), max_concurrency=2)
+        result = await handler.execute(self._aliased(4))
+        assert result["data"]["shop"] == {
+            f"x{i}": {"item_id": i} for i in range(4)
+        }
+        assert state["peak"] <= 2, f"same-route fan-out escaped the bound: {state}"
+        await handler.aclose()
+
+
 class TestScalarBodyRoundTrip:
     """Custom scalars' parse_value yields typed objects (Decimal/UUID/
     datetime); the body must cross json.dumps — regression for the
