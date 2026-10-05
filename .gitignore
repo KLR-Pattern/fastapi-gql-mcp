@@ -13,3 +13,4 @@ examples/*/.env
 examples/*/uv.lock
 examples/*/.venv/
 Comparison/bench/*/uv.lock
+.coverage
