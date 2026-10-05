@@ -20,7 +20,10 @@
   model degrades only that field (`result: JSON!`), the rest stays
   selectable. Previously these routes (and any route with a union-typed
   field) were skipped entirely with "unsupported type". Request-body unions
-  still skip — GraphQL has no input unions.
+  still skip — GraphQL has no input unions. Degraded routes are announced
+  at startup ("bridged N route(s) as raw JSON (no field selection)" naming
+  the union or the filtering kwarg, plus how to restructure to regain
+  field selection) — the same notice covers response-filtering routes.
 - Routes marked `deprecated=True` now map onto GraphQL-native deprecation:
   the field carries `@deprecated(reason: ...)` in the SDL, disappears from
   default introspection listings (`includeDeprecated: true` still shows

@@ -274,6 +274,10 @@ class TypeBuilder:
     """
 
     def __init__(self) -> None:
+        # (model.field, member names) for every union field bridged as raw
+        # JSON — the scanner reports these at startup so model owners know
+        # field selection was lost and how to regain it.
+        self.union_fields: list[tuple[str, str]] = []
         self._object_types: dict[type, GraphQLObjectType] = {}
         self._input_types: dict[type, GraphQLInputObjectType] = {}
         self._enum_types: dict[type, GraphQLEnumType] = {}
@@ -400,6 +404,9 @@ class TypeBuilder:
                     "select bare; GraphQL cannot promise one member)."
                 )
                 description = f"{description}\n\n{note}" if description else note
+                # Surfaced by the scanner's startup log: the model's owner can
+                # regain field selection by restructuring the union away.
+                self.union_fields.append((f"{model.__name__}.{field_name}", names))
             fields[gname] = GraphQLField(gtype, description=description)
         if not fields:
             raise UnsupportedFieldTypeError(model, f"{model.__name__} has no usable fields")

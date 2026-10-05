@@ -287,6 +287,80 @@ class TestMountAndSockets:
         assert skips == []
 
 
+class TestJsonFallbackNotices:
+    """Routes degraded to raw JSON (no field selection) get startup notices
+    naming the CAUSE and the way out — a silent downgrade is an
+    undiagnosable downgrade. Top-level union responses and serialization
+    filters report per-route; union fields nested in models report per-field."""
+
+    class Err(BaseModel):
+        code: int
+        message: str
+
+    def test_union_response_notice_names_members_and_remedy(self, caplog):
+        import logging
+
+        app = FastAPI()
+
+        @app.get("/risky", tags=["u"])
+        async def risky(ok: bool = True) -> ItemOut | TestJsonFallbackNotices.Err:
+            return ItemOut(id=1, name="n")
+
+        with caplog.at_level(logging.WARNING, logger="fastapi_gql_mcp.scanner"):
+            routes, _ = scan(app)
+        assert len(routes) == 1  # degraded, not skipped
+        rendered = caplog.text
+        assert "bridged 1 route(s) as raw JSON" in rendered
+        assert "GET /risky: union response (ItemOut|Err)" in rendered
+        assert "restructure into one model per shape" in rendered
+
+    def test_nested_union_field_notice_names_the_field(self, caplog):
+        import logging
+        from typing import Union
+
+        class Wrapped(BaseModel):
+            result: Union[ItemOut, TestJsonFallbackNotices.Err]
+
+        app = FastAPI()
+
+        @app.get("/wrapped", response_model=Wrapped, tags=["u"])
+        async def wrapped() -> Wrapped:
+            return Wrapped(result=ItemOut(id=1, name="w"))
+
+        with caplog.at_level(logging.WARNING, logger="fastapi_gql_mcp.scanner"):
+            scan(app)
+        assert "bridged 1 union field(s)" in caplog.text
+        assert "Wrapped.result (ItemOut, Err)" in caplog.text
+        assert "restructure the model class" in caplog.text
+
+    def test_response_filter_notice(self, caplog):
+        import logging
+
+        app = FastAPI()
+
+        @app.get("/sparse", response_model=ItemOut,
+                 response_model_exclude_unset=True)
+        async def sparse() -> ItemOut:
+            return ItemOut(id=1, name="s")
+
+        with caplog.at_level(logging.WARNING, logger="fastapi_gql_mcp.scanner"):
+            scan(app)
+        assert "response filtered via response_model_exclude_unset" in caplog.text
+
+    def test_no_notice_for_structured_routes(self, caplog):
+        import logging
+
+        app = FastAPI()
+
+        @app.get("/clean", response_model=ItemOut)
+        async def clean() -> ItemOut:
+            return ItemOut(id=1, name="c")
+
+        with caplog.at_level(logging.WARNING, logger="fastapi_gql_mcp.scanner"):
+            scan(app)
+        assert "raw JSON" not in caplog.text
+
+
 class TestQueryParameterModels:
     def test_lone_query_model_expanded(self):
         from typing import Annotated

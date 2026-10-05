@@ -26,7 +26,11 @@ from pydantic.fields import FieldInfo
 
 from fastapi_gql_mcp.domains import domains_for
 from fastapi_gql_mcp.naming import field_name_for
-from fastapi_gql_mcp.type_builder import TypeBuilder, UnsupportedFieldTypeError
+from fastapi_gql_mcp.type_builder import (
+    TypeBuilder,
+    UnsupportedFieldTypeError,
+    union_members,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +321,37 @@ class RouterScanner:
         if skips:
             rendered = "; ".join(f"{s.method} {s.path}: {s.reason}" for s in skips)
             logger.warning("fastapi-gql-mcp skipped %d route(s): %s", len(skips), rendered)
+
+        # Degraded-but-present routes deserve a startup notice too: the field
+        # is callable but has NO field selection. Naming the cause (and the
+        # way out) turns a silent downgrade into an actionable one.
+        degraded = []
+        for r in routes:
+            if r.response_filter:
+                degraded.append(
+                    f"{r.method} {r.path}: response filtered via {r.response_filter}"
+                )
+            elif (members := union_members(r.response_annotation)) is not None:
+                names = "|".join(getattr(m, "__name__", str(m)) for m in members)
+                degraded.append(
+                    f"{r.method} {r.path}: union response ({names}) — restructure "
+                    "into one model per shape to regain field selection"
+                )
+        if degraded:
+            logger.warning(
+                "fastapi-gql-mcp bridged %d route(s) as raw JSON (no field "
+                "selection): %s",
+                len(degraded),
+                "; ".join(degraded),
+            )
+        if types.union_fields:
+            rendered = "; ".join(f"{path} ({names})" for path, names in types.union_fields)
+            logger.warning(
+                "fastapi-gql-mcp bridged %d union field(s) as raw JSON — "
+                "restructure the model class to regain field selection: %s",
+                len(types.union_fields),
+                rendered,
+            )
         return routes, skips
 
     # ----------------------------------------------------------------- helpers
