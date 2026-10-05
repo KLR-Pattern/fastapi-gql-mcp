@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.1 (unreleased-ish — or fold into next)
+## Unreleased
 
 ### Fixed
 
