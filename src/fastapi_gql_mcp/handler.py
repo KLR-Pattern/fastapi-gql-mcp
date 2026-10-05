@@ -6,13 +6,25 @@ configuration problems surface at startup, not at first query.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
+from inspect import isawaitable
 from typing import Any
 
-from graphql import GraphQLSchema, graphql, print_schema
+from graphql import (
+    DocumentNode,
+    GraphQLError,
+    GraphQLSchema,
+    parse,
+    print_schema,
+)
+from graphql import (
+    execute as execute_document,
+)
+from graphql.validation import specified_rules, validate
 from opentelemetry import trace
 
-from fastapi_gql_mcp.depth_guard import depth_error
+from fastapi_gql_mcp.depth_guard import parse_guarded
 from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
 from fastapi_gql_mcp.scanner import RouteInfo, RouterScanner, SkipRecord
 from fastapi_gql_mcp.schema_builder import GQLMCPConfigError, SchemaBuilder
@@ -36,14 +48,30 @@ class RouterGraphQLHandler:
         max_concurrency: int | None = 16,
         max_depth: int | None = 10,
         validation_rules: Sequence[Any] | None = None,
+        document_cache_size: int = 128,
     ) -> None:
         if max_depth is not None and max_depth < 1:
             raise ValueError("max_depth must be >= 1, or None to disable")
+        if document_cache_size < 0:
+            raise ValueError("document_cache_size must be >= 0, or 0 to disable")
         self._invoker = RouteInvoker(
             app, timeout=request_timeout, max_concurrency=max_concurrency
         )
         self._max_depth = max_depth
         self._validation_rules = tuple(validation_rules) if validation_rules else ()
+        self._document_cache_size = document_cache_size
+        # (query string) -> (document | None, validation errors) — the pure,
+        # cacheable front half of every execution. Keyed by the string alone:
+        # schema / max_depth / validation_rules are immutable per instance.
+        # Per-instance ON PURPOSE — same-process handlers over different apps
+        # (comparison bench topology) must never cross-contaminate. Execution
+        # results are NOT cached: per-call credentials run for real every time.
+        # Single event loop: get/set have no await between them; under exotic
+        # thread callers a race costs a duplicate compile (idempotent), never
+        # a wrong answer.
+        self._doc_cache: OrderedDict[
+            str, tuple[DocumentNode | None, tuple[GraphQLError, ...]]
+        ] = OrderedDict()
         # Whitelist of inbound header names untrusted callers may forward into
         # route calls, lowercased at construction. None = the default
         # ("authorization",): same-app bridges speak for the caller, so the
@@ -121,11 +149,11 @@ class RouterGraphQLHandler:
         from an untrusted origin (MCP request, /graphql endpoint) must filter
         them through ``filter_passthrough_headers`` first.
         """
-        if self._max_depth is not None:
-            error = depth_error(query, self._max_depth)
-            if error is not None:
-                return {"errors": [error.formatted]}
         await self._invoker.start()
+        document, validation_errors = self._prepared_document(query)
+        if validation_errors:
+            return {"errors": [error.formatted for error in validation_errors]}
+        assert document is not None  # compile invariant: no errors → a document
         # The span that makes the middle layer visible: fastmcp's tool span
         # covers the call, FastAPI's route spans cover execution — this one
         # wraps the GraphQL orchestration between them (and the invoker
@@ -137,14 +165,15 @@ class RouterGraphQLHandler:
             span.set_attribute(
                 "graphql.operation_name", operation_name or "_anonymous"
             )
-            result = await graphql(
+            result = execute_document(
                 self._schema,
-                query,
+                document,
                 variable_values=variables or {},
                 operation_name=operation_name,
                 context_value=InvocationContext(headers=headers),
-                rules=self._validation_rules or None,
             )
+            if isawaitable(result):
+                result = await result
             if result.errors:
                 span.set_attribute("graphql.error_count", len(result.errors))
         payload: dict[str, Any] = {}
@@ -153,6 +182,49 @@ class RouterGraphQLHandler:
         if result.errors:
             payload["errors"] = [error.formatted for error in result.errors]
         return payload
+
+    # ------------------------------------------------------- document compile
+
+    def _prepared_document(
+        self, query: str
+    ) -> tuple[DocumentNode | None, tuple[GraphQLError, ...]]:
+        """Parse + depth-guard + validate — the pure front half of every
+        execution, LRU-cached by the query string (agents repeat documents;
+        validation over an immutable schema is a pure function of the
+        document, so a hit skips straight to execution). Rejected documents
+        are cached too: the same malformed query reports identically without
+        re-parsing."""
+        if self._document_cache_size <= 0:
+            return self._compile_document(query)
+        cached = self._doc_cache.get(query)
+        if cached is not None:
+            self._doc_cache.move_to_end(query)
+            return cached
+        compiled = self._compile_document(query)
+        self._doc_cache[query] = compiled
+        if len(self._doc_cache) > self._document_cache_size:
+            self._doc_cache.popitem(last=False)
+        return compiled
+
+    def _compile_document(
+        self, query: str
+    ) -> tuple[DocumentNode | None, tuple[GraphQLError, ...]]:
+        # ONE parse serves both the depth guard and execution (execute()
+        # takes a pre-parsed DocumentNode) — the string is never parsed twice.
+        if self._max_depth is not None:
+            error, document = parse_guarded(query, self._max_depth)
+            if error is not None:
+                return None, (error,)
+            assert document is not None  # parse_guarded: no error → a document
+        else:
+            try:
+                document = parse(query)
+            except GraphQLError as exc:
+                return None, (exc,)
+        # Custom rules EXTEND the standard set (replacing it would silently
+        # drop field/type checking for anyone passing a rule).
+        rules = (*specified_rules, *self._validation_rules)
+        return document, tuple(validate(self._schema, document, rules))
 
     async def aclose(self) -> None:
         """Release the invoker's HTTP client and app lifespan."""

@@ -73,6 +73,11 @@ class RouterMCP:
             depth unbounded, and an MCP caller is an LLM that can emit
             runaway nesting — overly deep documents are rejected before
             execution with a validation-style error.
+        document_cache_size: LRU capacity for the parse+validate front half
+            of execution, keyed by the query string (default 128, 0
+            disables). Agents repeat documents constantly; a hit skips
+            straight to execution. Execution results are never cached —
+            per-call credentials run for real every time.
         auth: Optional ``fastmcp`` auth provider (e.g.
             ``fastmcp.server.auth.providers.github.GitHubProvider``). Passed
             through to ``FastMCP`` untouched: the MCP endpoint then answers
@@ -105,6 +110,7 @@ class RouterMCP:
         request_timeout: float | None = 30.0,
         max_concurrency: int | None = 16,
         max_depth: int | None = 10,
+        document_cache_size: int = 128,
     ) -> None:
         self._mode = mode
         self._progressive_threshold = progressive_threshold
@@ -119,6 +125,7 @@ class RouterMCP:
             request_timeout=request_timeout,
             max_concurrency=max_concurrency,
             max_depth=max_depth,
+            document_cache_size=document_cache_size,
         )
         self._resolved_mode = self._resolve_mode(mode)
         self._domains = DomainRegistry(self._handler.routes)

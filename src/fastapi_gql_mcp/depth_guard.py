@@ -75,20 +75,31 @@ def document_depth(document: DocumentNode) -> int:
     return deepest
 
 
-def depth_error(query: str, max_depth: int) -> GraphQLError | None:
-    """A GraphQLError rejecting the document — too deep, cyclic fragments,
-    or unparsable (syntax errors surface through the same envelope graphql()
-    would use) — or None when the document is within bounds."""
+def parse_guarded(
+    query: str, max_depth: int
+) -> tuple[GraphQLError | None, DocumentNode | None]:
+    """Parse the document once and depth-check it in the same pass.
+
+    Returns ``(error, document)``: an error is set (syntax error, cyclic
+    fragment spreads, or too deep) when the document was rejected — and then
+    there is no document; otherwise the parsed document is handed back for
+    graphql-core to consume directly (``execute`` accepts a pre-parsed
+    ``DocumentNode``) — the caller must NOT parse the query string again.
+    """
     try:
         document = parse(query)
     except GraphQLError as exc:
-        return exc
+        return exc, None
     try:
         depth = document_depth(document)
     except _FragmentCycle:
-        return GraphQLError(
-            f"Document has cyclic fragment spreads (max_depth={max_depth})."
+        return (
+            GraphQLError(f"Document has cyclic fragment spreads (max_depth={max_depth})."),
+            None,
         )
     if depth > max_depth:
-        return GraphQLError(f"Query depth {depth} exceeds max_depth={max_depth}.")
-    return None
+        return (
+            GraphQLError(f"Query depth {depth} exceeds max_depth={max_depth}."),
+            None,
+        )
+    return None, document

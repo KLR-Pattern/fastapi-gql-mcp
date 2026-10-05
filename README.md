@@ -271,7 +271,7 @@ derive them from spans with an OTel Collector `spanmetrics` connector.
 
 ## Hardening the bridge
 
-Three knobs are built in and on by default:
+Four knobs are built in and on by default:
 
 - **`request_timeout`** (default 30s, `None` disables) — per-route-call
   deadline. The in-process ASGI call bypasses httpx's own timeout machinery,
@@ -286,9 +286,15 @@ Three knobs are built in and on by default:
   one wide query fans out; this protects the wrapped app's upstream from
   being hammered by its own bridge (queueing counts against
   `request_timeout`, default 30s).
+- **`document_cache_size`** (default 128, 0 disables) — LRU capacity for the
+  parse + depth-guard + validate front half of execution, keyed by the query
+  string. Agents repeat documents constantly; a hit skips straight to
+  execution (measured 1.52ms → 0.69ms on a 2-field query). Execution results
+  are never cached — per-call credentials run for real every time.
 
-All three are parameters of `RouterGraphQLHandler` and `RouterMCP`. For anything policy-shaped, `validation_rules=` on the handler
-passes extra graphql-core validation rules through.
+All four are parameters of `RouterGraphQLHandler` and `RouterMCP`. For
+anything policy-shaped, `validation_rules=` on the handler passes extra
+graphql-core validation rules through (they extend the standard set).
 
 For rate limiting and response caps on the **MCP face**, FastMCP's
 middleware suite attaches with zero bridge code — `RouterMCP.mcp` is the

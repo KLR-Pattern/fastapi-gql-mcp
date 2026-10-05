@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`document_cache_size` (default 128, 0 disables)** on
+  `RouterGraphQLHandler` / `RouterMCP`: an LRU for the compile front half of
+  execution — parse + depth guard + validate — keyed by the query string.
+  Agents repeat documents constantly, and validation over an immutable
+  schema is a pure function of the document, so a hit skips straight to
+  execution (measured 1.52ms → 0.69ms on a 2-field query; new/unique
+  queries are cost-neutral). Rejected documents cache their errors too.
+  Execution results are never cached: per-call credentials run for real
+  every time, and the cache lives on the handler instance so same-process
+  handlers over different schemas never cross-contaminate.
+
+### Changed
+
+- The query string is parsed **once** per compile: the depth guard's parse
+  is reused by execution (previously the guard parsed, discarded the AST,
+  and graphql() re-parsed the same string). The handler now drives
+  `validate` + `execute` directly instead of the `graphql()` wrapper.
+- `validation_rules=` now **extends** the standard rule set instead of
+  replacing it — passing a custom rule previously (and silently) dropped
+  all 32 standard validation rules for that handler.
+
 ## 0.4.0 (2026-10-04)
 
 ### Added

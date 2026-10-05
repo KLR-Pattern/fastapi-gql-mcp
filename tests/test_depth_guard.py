@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from graphql import parse
 from pydantic import BaseModel
 
-from fastapi_gql_mcp.depth_guard import _FragmentCycle, depth_error, document_depth
+from fastapi_gql_mcp.depth_guard import _FragmentCycle, document_depth, parse_guarded
 from fastapi_gql_mcp.handler import RouterGraphQLHandler
 
 
@@ -70,17 +70,21 @@ class TestDocumentDepth:
             document_depth(parse(doc))
 
 
-class TestDepthError:
-    def test_within_bounds_returns_none(self):
-        assert depth_error("{ a { b { c } } }", 10) is None
+class TestParseGuarded:
+    def test_within_bounds_returns_document(self):
+        error, document = parse_guarded("{ a { b { c } } }", 10)
+        assert error is None
+        assert document is not None  # caller hands it straight to execute()
 
     def test_too_deep_returns_error(self):
-        error = depth_error("{ a { b { c { d { e { f } } } } } }", 5)
-        assert error is not None
+        error, document = parse_guarded("{ a { b { c { d { e { f } } } } } }", 5)
+        assert document is None
         assert "exceeds max_depth=5" in error.message
 
     def test_syntax_error_surfaces(self):
-        assert depth_error("{ a {", 10) is not None  # same envelope as graphql()
+        error, document = parse_guarded("{ a {", 10)
+        assert document is None
+        assert error is not None  # same envelope as graphql()
 
 
 class TestHandlerIntegration:
@@ -137,13 +141,15 @@ class TestIntrospectionExempt:
     def test_standard_introspection_query_passes_default_guard(self):
         from graphql.utilities import get_introspection_query
 
-        assert depth_error(get_introspection_query(), max_depth=10) is None
+        error, document = parse_guarded(get_introspection_query(), max_depth=10)
+        assert error is None
+        assert document is not None
 
     def test_deep_data_selection_still_rejected(self):
         query = (
             "query Deep { t { a { b { c { d { e { f { g { h { i { j { k } } } } } } } } } } } }"
         )
-        err = depth_error(query, max_depth=10)
+        err, _ = parse_guarded(query, max_depth=10)
         assert err is not None and "exceeds max_depth=10" in err.message
 
     async def test_graphiql_schema_fetch_against_handler(self):
