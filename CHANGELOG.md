@@ -14,6 +14,16 @@
 
 ### Fixed
 
+- Routes using response-filtering serialization kwargs
+  (`response_model_exclude_unset` / `_exclude_defaults` / `_include` /
+  `_exclude` / `by_alias=False`) no longer break at runtime: the schema
+  previously promised every model field as non-null, but filtering runs
+  after validation, so a dropped (or retargeted) key nullified the whole
+  object with "Cannot return null for non-nullable field". These routes
+  now bridge as a raw `JSON` scalar — no skip, no field selection, no
+  promises filtering would break — and their field description tells
+  agents why. `exclude_none` stays structured: it only drops
+  Optional-valued keys, which map to nullable fields anyway.
 - Form/File routes are now skipped at scan time with an explicit reason
   ("form/file parameter 'x' cannot be bridged"). Previously a Form-only
   endpoint whose annotations were valid GraphQL scalars (`Annotated[str,

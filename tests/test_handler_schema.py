@@ -332,6 +332,80 @@ class TestDescriptions:
         assert "limit: Int = 5" in sdl
 
 
+class TestResponseFilterPassthrough:
+    """Routes whose serialization kwargs reshape the response JSON
+    (exclude_unset / exclude_defaults / include / exclude /
+    by_alias=False) stay in the schema as JSON-scalar fields instead of
+    being skipped: filtering happens after validation, so per-field
+    non-null promises cannot hold — the JSON blob carries whatever
+    arrives, and the field description tells agents why.
+    exclude_none is exempt: it only drops Optional-valued keys, which the
+    bridge maps to nullable fields anyway."""
+
+    class Filtered(BaseModel):
+        id: int
+        tag: str = "t"
+
+    @staticmethod
+    def _handler(**route_kwargs) -> RouterGraphQLHandler:
+        app = FastAPI()
+
+        @app.get("/x", response_model=TestResponseFilterPassthrough.Filtered,
+                 tags=["g"], **route_kwargs)
+        async def x() -> TestResponseFilterPassthrough.Filtered:
+            return TestResponseFilterPassthrough.Filtered(id=1)
+
+        return RouterGraphQLHandler(app)
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"response_model_exclude_unset": True},
+            {"response_model_exclude_defaults": True},
+            {"response_model_include": {"id"}},
+            {"response_model_exclude": {"tag"}},
+            {"response_model_by_alias": False},
+        ],
+        ids=["unset", "defaults", "include", "exclude", "by-alias"],
+    )
+    def test_filtered_response_bridges_as_json(self, kwargs):
+        handler = self._handler(**kwargs)
+        sdl = handler.get_sdl()
+        assert handler.skips == []
+        assert "x: JSON" in sdl
+        assert "raw JSON blob" in sdl  # agent-facing note in the field description
+
+    def test_exclude_none_keeps_structured_type(self):
+        handler = self._handler(response_model_exclude_none=True)
+        assert handler.skips == []
+        assert "x: Filtered" in handler.get_sdl()
+
+    async def test_filtered_route_executes_without_null_violation(self):
+        """The G1 bug: exclude_unset dropped defaulted keys and the non-null
+        field nulled the whole object. As JSON the same query just returns
+        the filtered blob."""
+        handler = self._handler(response_model_exclude_unset=True)
+        result = await handler.execute("{ g { x } }")
+        assert result == {"data": {"g": {"x": {"id": 1}}}}  # tag dropped by the app
+        await handler.aclose()
+
+    async def test_filter_detected_through_include_router(self):
+        from fastapi import APIRouter
+
+        inner = APIRouter()
+
+        @inner.get("/sub", response_model=TestResponseFilterPassthrough.Filtered,
+                   response_model_exclude_unset=True, tags=["h"])
+        async def sub() -> TestResponseFilterPassthrough.Filtered:
+            return TestResponseFilterPassthrough.Filtered(id=2)
+
+        app = FastAPI()
+        app.include_router(inner, prefix="/api")
+        handler = RouterGraphQLHandler(app)
+        assert "sub: JSON" in handler.get_sdl()
+        await handler.aclose()
+
+
 class TestDeprecation:
     """OpenAPI deprecated=True maps onto GraphQL-native deprecation: SDL
     directive, introspection visibility (hidden unless includeDeprecated),

@@ -34,6 +34,34 @@ logger = logging.getLogger(__name__)
 _VERB_PRIORITY = ("GET", "POST", "PUT", "PATCH", "DELETE")
 _MUTATION_VERBS = {"POST", "PUT", "PATCH", "DELETE"}
 
+# Route-level serialization kwargs that reshape the response AFTER
+# validation — the JSON the resolver sees may lack keys (or use different
+# keys) than the response model declares, so per-field GraphQL promises
+# cannot hold. exclude_none is NOT here: it only drops Optional-valued
+# keys, which the bridge maps to nullable fields anyway.
+_RESPONSE_FILTERS = (
+    "response_model_exclude_unset",
+    "response_model_exclude_defaults",
+    "response_model_include",
+    "response_model_exclude",
+)
+
+
+def response_filter_kwarg(route: Any) -> str | None:
+    """The first route kwarg that makes response fields unpredictable.
+
+    Returns the kwarg name (for documentation), or None when the response
+    shape is trustworthy. ``response_model_by_alias=False`` retargets keys
+    rather than filtering them, but the consequence is identical: the
+    JSON no longer matches the alias-built GraphQL field names.
+    """
+    for key in _RESPONSE_FILTERS:
+        if getattr(route, key, None):
+            return key
+    if getattr(route, "response_model_by_alias", True) is False:
+        return "response_model_by_alias=False"
+    return None
+
 
 @dataclass(frozen=True)
 class ParamInfo:
@@ -63,6 +91,7 @@ class RouteInfo:
     tags: tuple[str, ...] = ()
     description: str | None = None
     deprecated: bool = False
+    response_filter: str | None = None  # kwarg that unshapes the response JSON
     domains: frozenset[tuple[str, ...]] = frozenset()
 
     @property
@@ -365,8 +394,14 @@ class RouterScanner:
             else [_to_param_info(p) for p in query_p]
         )
 
+        # Filtered responses bypass the structured type entirely (the JSON
+        # scalar carries whatever arrives); only their INPUT types are trialed.
+        response_filter = response_filter_kwarg(route)
         try:
-            types.output_type(response_annotation, context=f"response of {route.path}")
+            if response_filter is None:
+                types.output_type(
+                    response_annotation, context=f"response of {route.path}"
+                )
             for param in (
                 *(_to_param_info(p, path_param=True) for p in path_p),
                 *query_params,
@@ -400,6 +435,7 @@ class RouterScanner:
             tags=str_tags,
             description=description,
             deprecated=deprecated,
+            response_filter=response_filter,
             domains=domains_for(str_tags, route.path),
         )
 

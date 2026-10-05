@@ -31,6 +31,7 @@ from graphql import (
 
 from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
 from fastapi_gql_mcp.naming import DuplicateFieldError
+from fastapi_gql_mcp.scalars import GraphQLJSON
 from fastapi_gql_mcp.scanner import ParamInfo, RouteInfo
 from fastapi_gql_mcp.type_builder import TypeBuilder
 
@@ -93,13 +94,28 @@ def _leaf_field(
     # erroring (4xx/5xx) must null only its own field, so agents composing
     # several routes in one query keep the other results. A NonNull field
     # error would null the whole response per GraphQL spec.
-    return GraphQLField(
-        types.bare_output_type(
+    description = route.description
+    if route.response_filter:
+        # Serialization filters (exclude_unset/include/...) reshape the JSON
+        # after validation, so per-field promises cannot hold: bridge the
+        # response as a raw JSON blob (no field selection) instead of skipping
+        # the route, and tell agents why.
+        note = (
+            "Returns a raw JSON blob without field selection: this route "
+            f"filters its response via {route.response_filter}, so the "
+            "GraphQL schema makes no per-field promises."
+        )
+        description = f"{description}\n\n{note}" if description else note
+        response_type: Any = GraphQLJSON
+    else:
+        response_type = types.bare_output_type(
             route.response_annotation, context=f"response of {route.path}"
-        ),
+        )
+    return GraphQLField(
+        response_type,
         args=_arguments(route, types),
         resolve=_resolver(route, invoker),
-        description=route.description,
+        description=description,
         # OpenAPI `deprecated: true` maps onto GraphQL-native deprecation:
         # introspection exposes isDeprecated/deprecationReason and GraphiQL
         # strikes the field through. Deprecated fields stay executable.
