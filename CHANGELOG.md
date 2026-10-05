@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-10-05)
 
 ### Added
 
@@ -24,6 +24,15 @@
 - `validation_rules=` now **extends** the standard rule set instead of
   replacing it — passing a custom rule previously (and silently) dropped
   all 32 standard validation rules for that handler.
+
+### Removed
+
+- The GH Pages deploy workflow: `comparison/index.html` was deliberately
+  folded into `comparison/README.md` in 0.4.0 (mermaid renders natively on
+  GitHub), leaving the workflow deploying a directory with no entry page —
+  the cause of its last failed run. The comparison report lives in the
+  README; re-add a Pages workflow if a standalone visual page is ever
+  wanted.
 
 ## 0.4.0 (2026-10-04)
 
