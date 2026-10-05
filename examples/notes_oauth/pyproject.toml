@@ -10,6 +10,7 @@ dependencies = [
     "httpx>=0.27",
     "python-dotenv>=1.0",
     "asgi-lifespan>=2.1",
+    "python-multipart>=0.0.32",
     "fastapi-gql-mcp[mcp]>=0.3",
 ]
 

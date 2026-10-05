@@ -5,11 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query
 
 from app import store
 from app.auth_routes import require_user
-from app.models import NoteCreate, NoteOut, StatsOut
+from app.models import NoteCreate, NoteOut, NoteSummary, StatsOut
 
 # No router-level tag: each route carries exactly one domain tag, so every
 # field has a single address in the GraphQL schema (router-level tags would
@@ -70,6 +70,58 @@ async def stats() -> StatsOut:
         notes=len(store.NOTES),
         users=len({n["owner"] for n in store.NOTES.values()}),
     )
+
+
+@router.get(
+    "/notes/{note_id}/summary",
+    response_model=NoteSummary,
+    response_model_exclude_unset=True,
+    tags=["notes:mine"],
+)
+async def note_summary(
+    note_id: int, user: Annotated[dict, Depends(require_user)]
+) -> NoteSummary:
+    """Sparse summary of YOUR note — how response filtering is bridged.
+
+    ``pinned``/``color`` are only emitted when actually set; with
+    ``response_model_exclude_unset`` the JSON may lack those keys, so the
+    bridge types this field as a raw ``JSON`` scalar (no field selection)
+    and explains why in the field description.
+    """
+    note = store.NOTES.get(note_id)
+    if note is None or note["owner"] != user["login"]:
+        raise HTTPException(status_code=404, detail="note not found")
+    return NoteSummary(id=note["id"], title=note["title"])
+
+
+@router.get("/legacy/stats", response_model=StatsOut, tags=["meta"], deprecated=True)
+async def legacy_stats() -> StatsOut:
+    """Old stats endpoint kept for bookmarks — how deprecation is bridged.
+
+    OpenAPI ``deprecated: true`` becomes GraphQL-native ``@deprecated``:
+    hidden from default introspection, still executable. Use ``stats``.
+    """
+    return stats()
+
+
+@router.post("/notes/{note_id}/attach", tags=["notes:mine"])
+async def attach_file(
+    note_id: int,
+    user: Annotated[dict, Depends(require_user)],
+    filename: Annotated[str, Form(description="name to store the attachment under")],
+    blob: Annotated[bytes, File(description="attachment bytes")],
+) -> dict[str, int | str]:
+    """Attach a file to YOUR note — how Form/File routes are handled.
+
+    Multipart bodies have no MCP input channel (tool arguments are JSON;
+    SEP-2631 is still draft), so the scanner skips this route with an
+    explicit logged reason rather than exposing a field that would always
+    422. The route keeps working over plain HTTP.
+    """
+    note = store.NOTES.get(note_id)
+    if note is None or note["owner"] != user["login"]:
+        raise HTTPException(status_code=404, detail="note not found")
+    return {"note_id": note_id, "filename": filename, "size": len(blob)}
 
 
 @router.get("/overview", tags=["meta"])

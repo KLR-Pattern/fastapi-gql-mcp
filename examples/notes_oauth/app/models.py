@@ -43,3 +43,12 @@ class StatsOut(BaseModel):
 
     notes: int = Field(description="notes stored across all users")
     users: int = Field(description="distinct note owners")
+
+
+class NoteSummary(BaseModel):
+    """Sparse note view for list widgets — deliberately optional-heavy."""
+
+    id: int = Field(description="stable note identifier")
+    title: str = Field(description="note headline")
+    pinned: bool = Field(default=False, description="pinned to the top")
+    color: str | None = Field(default=None, description="accent color, when themed")

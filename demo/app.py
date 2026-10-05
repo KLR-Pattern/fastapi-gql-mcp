@@ -9,6 +9,15 @@ Feature coverage on purpose:
 - **descriptions everywhere** — model docstrings, ``Field(description=...)``,
   endpoint docstrings, ``Query()/Path()/Body(description=...)`` all flow into
   the GraphQL schema (hover in GraphiQL to see them)
+- response filtering → **JSON scalar passthrough** (``/products/{id}/tag`` uses
+  ``response_model_exclude_unset``: the JSON may lack keys the model declares,
+  so the bridge exposes it as a raw JSON blob with an explanatory note instead
+  of promising fields that filtering can remove)
+- ``deprecated=True`` → **GraphQL-native ``@deprecated``** (``/v1/orders``:
+  struck through in GraphiQL, hidden from default introspection, executable)
+- Form/File route → **explicit skip** (``/products/{id}/image``: multipart has
+  no MCP input channel, so the scanner drops it with a logged reason — the
+  route itself keeps working over plain HTTP)
 - one untyped route (``/now``) to demonstrate the skip warning
 - lifespan startup log (proves lifespan wiring)
 """
@@ -19,7 +28,17 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Path, Query
+from fastapi import (
+    Body,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Path,
+    Query,
+)
 from pydantic import BaseModel, Field
 
 DEMO_TOKEN = "demo-secret"
@@ -107,6 +126,18 @@ class ShopStats(BaseModel):
     total_orders: int = Field(description="orders placed, all statuses")
     revenue_cents: int = Field(description="sum of quantity * unit price")
     products_in_stock: int = Field(description="products currently purchasable")
+
+
+class ProductTag(BaseModel):
+    """Shelf price tag for a product — deliberately sparse on purpose."""
+
+    id: int = Field(description="stable product identifier")
+    name: str = Field(description="human-readable name")
+    price_cents: int = Field(description="unit price in minor currency units")
+    promo_code: str | None = Field(
+        default=None, description="active discount code, when on sale"
+    )
+    featured: bool = Field(default=False, description="highlighted on the front page")
 
 
 # ------------------------------------------------------------------------ auth
@@ -306,6 +337,70 @@ def create_app() -> FastAPI:
     async def now():
         """Untyped on purpose — fastapi-gql-mcp skips this route with a warning."""
         return {"now": datetime.now(timezone.utc).isoformat()}
+
+    # ------------------------------------------- bridging behavior showcases
+
+    @app.get(
+        "/products/{product_id}/tag",
+        response_model=ProductTag,
+        response_model_exclude_unset=True,
+        tags=["shop:catalog"],
+    )
+    async def product_tag(
+        product_id: Annotated[int, Path(description="the product to tag")],
+    ) -> ProductTag:
+        """Sparse price-tag view — how response filtering is bridged.
+
+        Plain products leave ``promo_code``/``featured`` unset, so the JSON
+        lacks those keys. Per-field GraphQL promises cannot survive that, so
+        the bridge types this field as a raw ``JSON`` scalar (no field
+        selection) and says so in the field description.
+        """
+        product = app.state.products.get(product_id)
+        if product is None:
+            raise HTTPException(status_code=404, detail="product not found")
+        return ProductTag(
+            id=product["id"], name=product["name"], price_cents=product["price_cents"]
+        )
+
+    @app.get(
+        "/v1/orders",
+        response_model=list[OrderOut],
+        tags=["shop:orders"],
+        deprecated=True,
+    )
+    async def legacy_orders(
+        status: Annotated[
+            str | None, Query(description="filter by order status, e.g. paid")
+        ] = None,
+        _token: str = Depends(verify_token),
+    ) -> list[OrderOut]:
+        """Legacy order listing — how deprecation is bridged.
+
+        OpenAPI ``deprecated: true`` becomes GraphQL-native ``@deprecated``:
+        GraphiQL strikes the field through, default introspection hides it,
+        and it stays executable for old clients. Use ``list_orders`` instead.
+        """
+        orders = app.state.orders.values()
+        if status is not None:
+            orders = (o for o in orders if o["status"] == status)
+        return [OrderOut.model_validate(o) for o in orders]
+
+    @app.post("/products/{product_id}/image", tags=["shop:catalog"])
+    async def upload_product_image(
+        product_id: Annotated[int, Path(description="the product to illustrate")],
+        caption: Annotated[str, Form(description="alt text for the image")],
+        image: Annotated[bytes, File(description="image bytes")],
+    ) -> dict[str, int]:
+        """Upload a product image — how Form/File routes are handled.
+
+        Multipart bodies have no MCP input channel (tool arguments are JSON;
+        the protocol-level fix, SEP-2631, is still draft), so the scanner
+        skips this route with an explicit logged reason instead of exposing
+        a GraphQL field that would always 422. The route itself keeps
+        working over plain HTTP.
+        """
+        return {"product_id": product_id, "size": len(image)}
 
     return app
 
