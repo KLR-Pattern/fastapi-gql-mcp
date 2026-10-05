@@ -332,6 +332,51 @@ class TestDescriptions:
         assert "limit: Int = 5" in sdl
 
 
+class TestDeprecation:
+    """OpenAPI deprecated=True maps onto GraphQL-native deprecation: SDL
+    directive, introspection visibility (hidden unless includeDeprecated),
+    and executability are all spec behavior worth pinning."""
+
+    @staticmethod
+    def _handler() -> RouterGraphQLHandler:
+        app = FastAPI()
+
+        @app.get("/old", response_model=ItemOut, deprecated=True, tags=["misc"])
+        async def old() -> ItemOut:
+            return ItemOut(id=1, name="old")
+
+        @app.get("/new", response_model=ItemOut, tags=["misc"])
+        async def new() -> ItemOut:
+            return ItemOut(id=2, name="new")
+
+        return RouterGraphQLHandler(app)
+
+    def test_sdl_carries_deprecation_directive(self):
+        sdl = self._handler().get_sdl()
+        assert 'old: ItemOut @deprecated(reason: "This endpoint is deprecated.")' in sdl
+        assert "new: ItemOut" in sdl  # undeprecated fields stay bare
+
+    async def test_introspection_hides_unless_requested(self):
+        handler = self._handler()
+        result = await handler.execute(
+            '{ __type(name: "MiscQuery") { fields { name } '
+            'all: fields(includeDeprecated: true) { name isDeprecated deprecationReason } } }'
+        )
+        visible = [f["name"] for f in result["data"]["__type"]["fields"]]
+        assert visible == ["new"]  # spec default: deprecated fields are hidden
+        by_name = {f["name"]: f for f in result["data"]["__type"]["all"]}
+        assert by_name["old"]["isDeprecated"] is True
+        assert by_name["old"]["deprecationReason"] == "This endpoint is deprecated."
+        assert by_name["new"]["isDeprecated"] is False
+        await handler.aclose()
+
+    async def test_deprecated_field_still_executes(self):
+        handler = self._handler()
+        result = await handler.execute("{ misc { old { id } new { id } } }")
+        assert result == {"data": {"misc": {"old": {"id": 1}, "new": {"id": 2}}}}
+        await handler.aclose()
+
+
 class TestMutationOnlyApp:
     def test_mutation_only_schema_fails_fast(self):
         from fastapi_gql_mcp import GQLMCPConfigError

@@ -93,6 +93,18 @@ class TestListQueries:
             {"name": "limit", "type": "Int", "description": "how many things"}
         ]
 
+    async def test_deprecated_flag_in_brief(self, mcp):
+        app = FastAPI()
+
+        @app.get("/old", response_model=Out, tags=["t"], deprecated=True)
+        async def old():
+            return Out(id=1, name="o")
+
+        m = RouterMCP(app, mode="progressive")
+        async with Client(m.mcp) as client:
+            result = payload(await client.call_tool("list_queries", {"domain": "t"}))
+        assert result["data"]["queries"][0]["deprecated"] is True
+
     async def test_unknown_domain_error(self, mcp):
         async with Client(mcp.mcp) as client:
             result = payload(await client.call_tool("list_queries", {"domain": "nope"}))

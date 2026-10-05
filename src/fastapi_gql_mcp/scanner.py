@@ -61,6 +61,7 @@ class RouteInfo:
     response_annotation: Any = None
     tags: tuple[str, ...] = ()
     description: str | None = None
+    deprecated: bool = False
     domains: frozenset[tuple[str, ...]] = frozenset()
 
     @property
@@ -371,6 +372,8 @@ class RouterScanner:
         description = route.summary or route.description or None
         # OpenAPI typing allows Enum tags; only string tags form domains.
         str_tags = tuple(t for t in route.tags or () if isinstance(t, str))
+        # OpenAPI's `deprecated: true` becomes GraphQL-native deprecation.
+        deprecated = bool(getattr(route, "deprecated", False))
         return RouteInfo(
             route=route,
             method=method,
@@ -382,6 +385,7 @@ class RouterScanner:
             response_annotation=response_annotation,
             tags=str_tags,
             description=description,
+            deprecated=deprecated,
             domains=domains_for(str_tags, route.path),
         )
 

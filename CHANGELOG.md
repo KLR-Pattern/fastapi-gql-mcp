@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- Routes marked `deprecated=True` now map onto GraphQL-native deprecation:
+  the field carries `@deprecated(reason: ...)` in the SDL, disappears from
+  default introspection listings (`includeDeprecated: true` still shows
+  it), and progressive-discovery briefs gain a `"deprecated": true` flag.
+  Deprecated fields remain executable — deprecation is metadata, not
+  access control. Previously the flag was silently ignored and deprecated
+  routes surfaced as ordinary fields.
+
 ### Fixed
 
 - Request bodies (and body-bound variables) carrying custom-scalar fields —

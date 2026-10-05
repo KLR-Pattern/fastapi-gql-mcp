@@ -56,6 +56,7 @@ def _field_brief(name: str, field: Any) -> dict[str, Any]:
         "name": name,
         "type": str(field.type),
         "description": field.description,
+        **({"deprecated": True} if field.deprecation_reason is not None else {}),
         **({"args": args} if args else {}),
     }
 

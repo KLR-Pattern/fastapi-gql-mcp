@@ -100,6 +100,12 @@ def _leaf_field(
         args=_arguments(route, types),
         resolve=_resolver(route, invoker),
         description=route.description,
+        # OpenAPI `deprecated: true` maps onto GraphQL-native deprecation:
+        # introspection exposes isDeprecated/deprecationReason and GraphiQL
+        # strikes the field through. Deprecated fields stay executable.
+        deprecation_reason=(
+            "This endpoint is deprecated." if route.deprecated else None
+        ),
     )
 
 

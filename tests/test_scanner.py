@@ -192,6 +192,21 @@ class TestParams:
         routes, _ = scan(build_app())
         assert by_field(routes, "get_item").response_annotation is ItemOut
 
+    def test_deprecated_flag_captured(self):
+        app = FastAPI()
+
+        @app.get("/old", response_model=ItemOut, deprecated=True)
+        async def old():
+            return ItemOut(id=1, name="o")
+
+        @app.get("/new", response_model=ItemOut)
+        async def new():
+            return ItemOut(id=2, name="n")
+
+        routes, _ = scan(app)
+        assert by_field(routes, "old").deprecated is True
+        assert by_field(routes, "new").deprecated is False
+
 
 class TestDomains:
     def test_tag_domains(self):
