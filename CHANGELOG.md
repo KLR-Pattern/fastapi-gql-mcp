@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- `__version__` was left at 0.4.0 when 0.5.0 shipped — the published
+  package reported the wrong runtime version. Now synced (the three-place
+  bump is spelled out in AGENTS.md).
+- Example: `legacy_stats` returned a coroutine (`return stats()` without
+  `await`), so the deprecation showcase route failed validation.
+
 ### Added
 
 - Routes marked `deprecated=True` now map onto GraphQL-native deprecation:

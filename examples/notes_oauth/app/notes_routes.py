@@ -101,7 +101,7 @@ async def legacy_stats() -> StatsOut:
     OpenAPI ``deprecated: true`` becomes GraphQL-native ``@deprecated``:
     hidden from default introspection, still executable. Use ``stats``.
     """
-    return stats()
+    return await stats()
 
 
 @router.post("/notes/{note_id}/attach", tags=["notes:mine"])
