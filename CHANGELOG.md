@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0 (2026-10-06)
+
 ### Added
 
 - **Untyped routes now bridge instead of skipping.** An endpoint with no
@@ -28,6 +30,15 @@
 
 ### Changed
 
+- The README gains a **Capability boundaries** section (and why.md a
+  "THE BRIDGING PROMISE" passage): the four outcome buckets —
+  structured by default, raw-JSON fallback with named causes, Boolean
+  success for `-> None`, skips only when a route cannot be called
+  correctly — so users can see the library's edges up front. A stale
+  How-it-works bullet describing untyped routes as skipped was fixed
+  in the same pass.
+- CI enforces a **coverage gate** (`--cov-fail-under=95`, baseline
+  95.7%); local pytest runs stay ungated.
 - Every skip reason now states the remedy, not just the problem — e.g.
   "query parameter model mixed with plain query parameters is not
   supported — move the plain parameters into the model (FastAPI itself
