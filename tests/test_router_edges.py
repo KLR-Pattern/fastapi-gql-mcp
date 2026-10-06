@@ -21,7 +21,7 @@ from fastapi import (
     Request,
     Response,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from fastapi_gql_mcp import RouterGraphQLHandler
 
@@ -43,6 +43,14 @@ class User(BaseModel):
 class Page(BaseModel, Generic[T]):
     items: list[T]
     total: int
+
+
+class EchoIn(BaseModel):
+    """Input model with an excluded field (H1): exclude is serialization-
+    only, so the field stays a valid request-side argument."""
+
+    note: str
+    internal_flag: bool = Field(default=False, exclude=True)
 
 
 # ------------------------------------------------------------------- G5
@@ -241,6 +249,67 @@ class TestSpecialParams:
         # The bg task ran within the ASGI response cycle, AFTER the JSON was
         # produced — the route did not await it inline.
         assert ran == ["bg"]
+
+
+# ------------------------------------------------------------------- H1
+
+
+class TestExcludedFields:
+    """Field(exclude=True) never serializes, so the schema must not promise
+    it (selecting it previously nulled the whole object). Excluded fields
+    stay valid INPUT fields — exclude is serialization-only."""
+
+    class UserOut(BaseModel):
+        id: int
+        name: str = "n"
+        password_hash: str = Field(default="x", exclude=True)
+
+    @staticmethod
+    def _handler() -> RouterGraphQLHandler:
+        app = FastAPI()
+
+        @app.get("/user", response_model=TestExcludedFields.UserOut, tags=["h1"])
+        async def user() -> TestExcludedFields.UserOut:
+            return TestExcludedFields.UserOut(id=1)
+
+        return RouterGraphQLHandler(app)
+
+    def test_excluded_field_absent_from_schema(self):
+        sdl = self._handler().get_sdl()
+        assert "password_hash" not in sdl
+        assert "name: String" in sdl  # siblings stay selectable
+
+    async def test_selecting_works_and_excluded_is_unknown(self):
+        handler = self._handler()
+        ok = await handler.execute("{ h1 { user { id name } } }")
+        assert ok == {"data": {"h1": {"user": {"id": 1, "name": "n"}}}}
+        # The fix: previously this selected a promised-but-never-serialized
+        # field and nulled the whole object; now it is simply not a field.
+        gone = await handler.execute("{ h1 { user { id password_hash } } }")
+        assert "Cannot query field 'password_hash'" in gone["errors"][0]["message"]
+        await handler.aclose()
+
+    async def test_excluded_field_still_an_input(self):
+        app = FastAPI()
+
+        @app.get("/ping", response_model=Ok, tags=["h1"])
+        async def ping() -> Ok:
+            return Ok(ok=True)
+
+        @app.post("/echo", response_model=Ok, tags=["h1"])
+        async def echo(payload: EchoIn) -> Ok:
+            assert payload.internal_flag is True  # validation still reads it
+            return Ok(ok=True)
+
+        handler = RouterGraphQLHandler(app, allow_mutation=True)
+        sdl = handler.get_sdl()
+        assert "internalFlag" in sdl or "internal_flag" in sdl  # input keeps it
+        result = await handler.execute(
+            'mutation { h1 { echo(payload: {note: "x", internal_flag: true}) '
+            "{ ok } } }"
+        )
+        assert result == {"data": {"h1": {"echo": {"ok": True}}}}
+        await handler.aclose()
 
 
 # ------------------------------------------------------------------- G10

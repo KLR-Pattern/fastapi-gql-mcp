@@ -417,6 +417,13 @@ class TypeBuilder:
         fields: dict[str, GraphQLField] = {}
         ns = _model_namespace(model)
         for field_name, info in model.model_fields.items():
+            # Field(exclude=True) never serializes — building it into the
+            # schema would promise a key the JSON never carries (selecting it
+            # nulls the whole object). Excluded fields stay valid INPUT
+            # fields: exclude is serialization-only, validation still reads
+            # them, so the input side keeps them.
+            if info.exclude is True:
+                continue
             # FastAPI serializes responses by alias, so GraphQL field names must
             # match the JSON keys the resolver will actually see.
             json_name = info.serialization_alias or info.alias or field_name
