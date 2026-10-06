@@ -16,7 +16,7 @@ mcp.run()  # HTTP MCP server with get_schema + graphql_query tools
 ```
 
 **Contents** — [Why](#why) · [How it works](#how-it-works) ·
-[Installation](#installation) · [Usage](#usage) · [Authentication](#authentication) ·
+[Capability boundaries](#capability-boundaries) · [Installation](#installation) · [Usage](#usage) · [Authentication](#authentication) ·
 [Observability](#observability-opentelemetry) · [Hardening](#hardening-the-bridge) ·
 [Demo](#demo) · [Development](#development) · [Status](#status)
 
@@ -133,13 +133,13 @@ Rules worth knowing:
   writes in DIFFERENT domains are ordered; writes grouped under the SAME
   domain run in parallel like query fields. When write order matters, put the
   operations in separate domains or send separate mutation documents.
-- **Dynamic shapes pass through as `JSON`** — endpoints and fields annotated
-  `dict`, `dict[K, V]` or `Any` bridge as the `JSON` scalar instead of being
-  skipped (both directions: a `JSON` argument lands as the raw request body).
-  Routes with NO annotation and no `response_model`, raw `Response` returns,
-  hidden routes and required header/cookie params are still **skipped with a
-  warning** — `handler.skips` lists them programmatically, so CI can assert
-  nothing fell out of the schema unnoticed.
+- **Dynamic shapes pass through as `JSON`** — `dict`/`Any` annotations bridge
+  as the `JSON` scalar in both directions (a `JSON` argument lands as the raw
+  request body); untyped routes, serialization-filtered responses and unions
+  degrade the same way, each with a field note and a startup notice naming
+  the fix — see [Capability boundaries](#capability-boundaries). Only routes
+  that cannot be called correctly at all are skipped, with a logged reason;
+  `handler.skips` lists them programmatically for CI assertions.
 - `include`/`exclude` fnmatch globs scope which routes enter the schema.
 - Route tags form a **domain tree** (`tags=["billing:invoice"]`); large apps
   switch to **progressive disclosure** (below).
@@ -151,6 +151,54 @@ Rules worth knowing:
   docstrings (or `summary=`) → field descriptions,
   `Query()/Path()/Body(description=...)` → argument descriptions. They surface
   in GraphiQL hover, introspection and every MCP discovery tool.
+
+## Capability boundaries
+
+The bridging promise: **if a route works over HTTP, it stays callable here.**
+Every route lands in one of four buckets.
+
+### Structured — the default
+
+A typed `response_model` (or return annotation) over Pydantic models becomes
+a selectable GraphQL type: `{ id name }`, nested models, lists, enums, custom
+scalars (`UUID`, `Decimal`, datetime…), generics (`Page[Item]`), aliases.
+
+### Raw JSON fallback — still callable, just not field-selectable
+
+| Your route | What happens |
+|---|---|
+| returns `dict` / `Any` | author-declared dynamic shape → the `JSON` scalar, no sub-selection |
+| no return annotation, no `response_model` | same, plus the field description and a startup notice tell you to add one |
+| `response_model_exclude_unset` / `_exclude_defaults` / `_include` / `_exclude` / `by_alias=False` | filtering runs after validation, so per-field promises cannot hold; the notice names the kwarg |
+| returns a union (`Item \| Error`) | the union bridges as `JSON`; nested inside a model, only that field degrades |
+
+Every fallback names its cause in the field description **and** in a startup
+warning (`bridged N route(s) as raw JSON …`) that says how to get field
+selection back. `response_model_exclude_none` stays structured — it only
+drops keys that are nullable anyway.
+
+### Boolean success — `-> None` routes
+
+Deletes and other side-effect calls annotated `-> None` (204-style) become
+`gone(id): Boolean`: `true` on 2xx, failures surface as field errors.
+
+### Skipped — only when the route cannot be called correctly
+
+Skips are logged at startup with the reason and the fix; `handler.skips`
+exposes them (`path`, `method`, `reason`) for CI assertions.
+
+| Condition | Why / what to do |
+|---|---|
+| `Form()` / `File()` body | MCP tool arguments are JSON; the protocol has no file channel yet (SEP-2631 draft). The route stays available over plain HTTP |
+| required header/cookie parameter | headers are not GraphQL arguments — make it optional; caller credentials ride `passthrough_headers` |
+| query-parameter model mixed with plain params | FastAPI itself cannot serve that shape on the wire; move the plain params into the model |
+| write verbs with `allow_mutation=False` (the default) | opt in with `allow_mutation=True` or `mutation_include` |
+| hidden route (`include_in_schema=False`) | opt in with `include_hidden=True` |
+| returns a raw `Response` (streaming, plain text) | no typed body to expose |
+| input type GraphQL cannot express (`payload: A \| B`, `set[int]`, …) | GraphQL has no input unions; guessing would fail at runtime |
+
+`include`/`exclude` globs also remove paths by configuration — that is
+filtering you asked for, not a skip.
 
 ## Installation
 
