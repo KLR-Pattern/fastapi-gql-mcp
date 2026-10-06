@@ -9,6 +9,7 @@ decides whether those skips are acceptable.
 from __future__ import annotations
 
 import fnmatch
+import inspect
 import logging
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
@@ -454,8 +455,9 @@ class RouterScanner:
         # Filtered responses bypass the structured type entirely (the JSON
         # scalar carries whatever arrives); only their INPUT types are trialed.
         response_filter = response_filter_kwarg(route)
+        is_void = response_annotation is type(None)
         try:
-            if response_filter is None:
+            if response_filter is None and not is_void:
                 types.output_type(
                     response_annotation, context=f"response of {route.path}"
                 )
@@ -502,5 +504,12 @@ class RouterScanner:
         # Both an explicit response_model=None (Response-returning routes) and
         # the DefaultPlaceholder (unset) fall back to the typed return annotation.
         if response_model is None or isinstance(response_model, DefaultPlaceholder):
+            raw = inspect.signature(route.endpoint).return_annotation
+            # `-> None` (and its string form under future-annotations) is an
+            # EXPLICIT "no response body" contract — bridged as a Boolean
+            # success field. An EMPTY annotation is no contract at all and
+            # stays skipped ("no typed response").
+            if raw is None or raw == "None":
+                return type(None)
             return get_typed_return_annotation(route.endpoint)
         return response_model

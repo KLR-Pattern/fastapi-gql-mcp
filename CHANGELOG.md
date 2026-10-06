@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Routes explicitly annotated `-> None` (204-style deletes and
+  side-effect calls) now bridge as a Boolean success field instead of
+  being skipped as untyped: the call is the point, and "no response
+  body" is an explicit contract — `gone(id): Boolean` returns true on
+  2xx, failures surface as field errors as usual. Endpoints with NO
+  return annotation at all still skip ("no typed response"): an absent
+  annotation is no contract, and silently bridging it would let refactors
+  degrade the schema without a peep.
+
 ### Fixed
 
 - Query-parameter lists with mixed None items no longer stringify None

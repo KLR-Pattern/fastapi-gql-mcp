@@ -247,24 +247,56 @@ class TestSpecialParams:
 
 
 class TestBodylessResponse:
-    """DELETE with `-> None` (204-style): no typed response contract, so
-    the route skips with the no-typed-response reason."""
+    """`-> None` (204-style) is an explicit no-body contract: the route
+    bridges as a Boolean success field (the call IS the point — deletes,
+    side effects). Truly untyped endpoints stay skipped."""
 
-    def test_none_return_skips_with_typed_response_reason(self):
-        from fastapi_gql_mcp.scanner import RouterScanner
-
+    @staticmethod
+    def _app() -> FastAPI:
         app = FastAPI()
 
-        @app.delete("/gone/{item_id}", status_code=204)
+        @app.delete("/gone/{item_id}", status_code=204, tags=["g10"])
         async def gone(item_id: int) -> None:
             return None
 
-        routes, skips = RouterScanner(app, allow_mutation=True).scan()
-        assert routes == []
-        assert any(
-            "no typed response" in s.reason and s.path == "/gone/{item_id}"
-            for s in skips
-        )
+        @app.delete("/missing/{item_id}", tags=["g10"])
+        async def missing(item_id: int) -> None:
+            if item_id != 1:
+                raise HTTPException(status_code=404, detail="no such item")
+            return None
+
+        @app.get("/ping", response_model=Ok, tags=["g10"])
+        async def ping() -> Ok:
+            return Ok(ok=True)
+
+        @app.get("/untyped")
+        async def untyped():
+            return {"x": 1}
+
+        return app
+
+    def test_void_bridges_but_untyped_still_skips(self):
+        from fastapi_gql_mcp.scanner import RouterScanner
+
+        routes, skips = RouterScanner(self._app(), allow_mutation=True).scan()
+        assert {r.field_name for r in routes} == {"gone", "missing", "ping"}
+        assert any("no typed response" in s.reason for s in skips)
+
+    async def test_void_mutation_returns_true(self):
+        handler = RouterGraphQLHandler(self._app(), allow_mutation=True)
+        sdl = handler.get_sdl()
+        assert "gone(item_id: Int!): Boolean" in sdl
+        assert "true on success" in sdl  # agent-facing note
+        result = await handler.execute("mutation { g10 { gone(item_id: 5) } }")
+        assert result == {"data": {"g10": {"gone": True}}}
+        await handler.aclose()
+
+    async def test_void_failure_nulls_with_field_error(self):
+        handler = RouterGraphQLHandler(self._app(), allow_mutation=True)
+        result = await handler.execute("mutation { g10 { missing(item_id: 9) } }")
+        assert result["data"]["g10"]["missing"] is None
+        assert result["errors"][0]["extensions"]["code"] == "HTTP_404"
+        await handler.aclose()
 
 
 # ------------------------------------------------------------------- G11

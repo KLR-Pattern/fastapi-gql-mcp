@@ -18,6 +18,7 @@ from typing import Any, cast
 
 from graphql import (
     GraphQLArgument,
+    GraphQLBoolean,
     GraphQLEnumType,
     GraphQLField,
     GraphQLInputObjectType,
@@ -99,6 +100,31 @@ def _leaf_field(
     # several routes in one query keep the other results. A NonNull field
     # error would null the whole response per GraphQL spec.
     description = route.description
+    if route.response_annotation is type(None):
+        # Explicit `-> None` (204-style deletes and side-effect calls): the
+        # CALL is the point, and "no response body" is an explicit contract —
+        # so the field bridges as a Boolean success flag: true on 2xx, and
+        # failures already surface as field errors through the invoker.
+        note = (
+            "Returns true on success — this route has no response body "
+            "(-> None / 204); failures surface as field errors."
+        )
+        description = f"{description}\n\n{note}" if description else note
+        base_resolve = _resolver(route, invoker)
+
+        async def void_resolve(_root: Any, _info: Any, **kwargs: Any) -> bool:
+            await base_resolve(_root, _info, **kwargs)
+            return True
+
+        return GraphQLField(
+            GraphQLBoolean,
+            args=_arguments(route, types),
+            resolve=void_resolve,
+            description=description,
+            deprecation_reason=(
+                "This endpoint is deprecated." if route.deprecated else None
+            ),
+        )
     notes: list[str] = []
     if route.response_filter:
         # Serialization filters (exclude_unset/include/...) reshape the JSON

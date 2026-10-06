@@ -347,6 +347,8 @@ class RouteInvoker:
             ) from exc
         if response.status_code >= 400:
             raise _http_error(route, response)
+        if response.status_code == 204 or not response.content:
+            return None  # bodyless (204 / explicit -> None): nothing to parse
         if "application/json" in response.headers.get("content-type", ""):
             return response.json()
         return {"_raw": response.text}
