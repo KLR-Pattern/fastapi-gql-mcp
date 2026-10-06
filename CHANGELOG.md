@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed
+
+- Query-parameter lists with mixed None items no longer stringify None
+  into the literal value `"None"` (`?tag=None`): None items are dropped,
+  an all-None list is simply not sent.
+
+### Changed
+
+- Parametrized generic models (`Page[Item]`) get clean GraphQL type names
+  (`Page_Item`) derived from the generic origin plus argument names,
+  instead of the sanitizer mangling the source spelling
+  (`Page[Item].__name__` → `Page_Item_` with a warning). Uniqueness per
+  parameterization is preserved and name collisions still dedup.
+
 ## 0.6.0 (2026-10-06)
 
 ### Added

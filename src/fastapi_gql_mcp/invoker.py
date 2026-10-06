@@ -194,8 +194,11 @@ def _render_param(value: Any) -> Any:
     if value is None:
         return None
     if isinstance(value, list):
-        rendered = [_render_param(v) for v in value]
-        return rendered if any(v is not None for v in rendered) else None
+        # Mixed lists drop their None items rather than stringifying them
+        # ("None" as a query value is never what the caller meant); an
+        # all-None list means "not provided" and is not sent at all.
+        rendered = [r for r in (_render_param(v) for v in value) if r is not None]
+        return rendered or None
     if isinstance(value, bool):
         return "true" if value else "false"
     return value

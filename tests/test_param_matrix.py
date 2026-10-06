@@ -16,6 +16,7 @@ here select the field bare and assert on the returned dict.
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Callable
 from datetime import date, datetime
@@ -25,7 +26,7 @@ from typing import Annotated, Any
 
 import pytest
 from fastapi import Body, Cookie, FastAPI, File, Form, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from fastapi_gql_mcp import RouterGraphQLHandler
 
@@ -35,6 +36,25 @@ _UUID = "12345678-1234-5678-1234-567812345678"
 class Color(Enum):
     red = "red"
     blue = "blue"
+
+
+def _to_camel(s: str) -> str:
+    return re.sub(r"_([a-z])", lambda m: m.group(1).upper(), s)
+
+
+class AliasedIn(BaseModel):
+    """Body model with alias_generator: input/output sides each name by
+    their own alias (G4 pin — camelCase-API shape)."""
+
+    model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True)
+    full_name: str
+    max_items: int = 5
+
+
+class AliasedOut(BaseModel):
+    model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True)
+    full_name: str
+    max_items: int = 5
 
 
 class ItemIn(BaseModel):
@@ -136,6 +156,10 @@ def build_app() -> FastAPI:
     @app.post("/s7", tags=["t3"])
     async def b_scalar(note: str) -> dict:
         return {"note": note}
+
+    @app.post("/s8", tags=["t3"])
+    async def b_alias_model(payload: AliasedIn) -> AliasedOut:
+        return AliasedOut(full_name=payload.full_name, max_items=payload.max_items)
 
     # ---- optional header / cookie ----
     @app.get("/o1", tags=["t4"])
@@ -258,6 +282,20 @@ CASES: list[tuple[str, str, str, Callable[[dict], bool]]] = [
         'mutation { t3 { b_scalar(note: "s") } }',
         "t3",
         lambda r: r["note"] == "s",
+    ),
+    (
+        "body-model-alias-generator",
+        'mutation { t3 { b_alias_model(payload: {fullName: "n", maxItems: 2}) '
+        "{ fullName maxItems } } }",
+        "t3",
+        lambda r: r == {"fullName": "n", "maxItems": 2},
+    ),
+    (
+        "body-model-alias-defaults",
+        'mutation { t3 { b_alias_model(payload: {fullName: "x"}) '
+        "{ fullName maxItems } } }",
+        "t3",
+        lambda r: r["maxItems"] == 5,
     ),
     (
         "optional-header-defaults",

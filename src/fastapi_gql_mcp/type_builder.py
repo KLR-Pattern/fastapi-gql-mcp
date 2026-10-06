@@ -128,6 +128,33 @@ def union_member_names(annotation: Any) -> list[str]:
     return [getattr(m, "__name__", str(m)) for m in members]
 
 
+def graphql_model_name(model: type[BaseModel]) -> str:
+    """Base GraphQL type name for a model, generic-parameter aware.
+
+    A parametrized generic's ``__name__`` is its source spelling —
+    ``Page[Item].__name__ == "Page[Item]"`` — which the name sanitizer
+    would mangle into ``Page_Item_`` with a warning. Rendering the origin
+    plus argument names directly (``Page_Item``) is clean, unique per
+    parameterization, and dedups through ``_register_name`` like any name.
+
+    Pydantic v2 parametrized generics carry their origin/args in
+    ``__pydantic_generic_metadata__`` (``typing.get_origin`` reads None
+    on the dynamic subclass); plain ``Generic`` fallback uses get_origin.
+    """
+    meta = getattr(model, "__pydantic_generic_metadata__", None)
+    if isinstance(meta, dict) and meta.get("origin") is not None:
+        origin: Any = meta["origin"]
+        args = "_".join(
+            getattr(a, "__name__", str(a)) for a in meta.get("args") or ()
+        )
+        return f"{origin.__name__}_{args}" if args else origin.__name__
+    origin = get_origin(model)
+    if origin is not None and isinstance(origin, type):
+        args = "_".join(getattr(a, "__name__", str(a)) for a in get_args(model))
+        return f"{origin.__name__}_{args}" if args else origin.__name__
+    return model.__name__
+
+
 def unwrap_optional(annotation: Any) -> Any:
     annotation = strip_annotated(annotation)
     origin = get_origin(annotation)
@@ -363,7 +390,9 @@ class TypeBuilder:
         cached = self._object_types.get(model)
         if cached is not None:
             return cached
-        name = self._register_name(model, sanitize_graphql_name(model.__name__, what="type name"))
+        name = self._register_name(
+            model, sanitize_graphql_name(graphql_model_name(model), what="type name")
+        )
         obj = GraphQLObjectType(
             name=name,
             description=_own_doc(model),
@@ -456,7 +485,7 @@ class TypeBuilder:
         cached = self._input_types.get(model)
         if cached is not None:
             return cached
-        base = sanitize_graphql_name(model.__name__, what="type name")
+        base = sanitize_graphql_name(graphql_model_name(model), what="type name")
         name = self._register_name(model, f"{base}Input")
         obj = GraphQLInputObjectType(
             name=name,
