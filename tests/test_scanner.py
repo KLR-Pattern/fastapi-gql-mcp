@@ -1,6 +1,6 @@
 """scanner: FastAPI routes -> RouteInfo / SkipRecord."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, Query
 from fastapi.responses import PlainTextResponse, StreamingResponse
@@ -138,10 +138,10 @@ class TestFiltering:
 
 
 class TestSkips:
-    def test_untyped_response_skipped(self):
+    def test_untyped_response_bridges_as_any(self):
         routes, skips = scan(build_app())
-        assert "ping" not in [r.field_name for r in routes]
-        assert any("no typed response" in r for r in skip_reasons(skips, "/ping"))
+        assert by_field(routes, "ping").response_annotation is Any
+        assert not any("no typed response" in r for r in skip_reasons(skips, "/ping"))
 
     def test_raw_response_skipped(self):
         _, skips = scan(build_app())

@@ -18,7 +18,9 @@ Feature coverage on purpose:
 - Form/File route → **explicit skip** (``/products/{id}/image``: multipart has
   no MCP input channel, so the scanner drops it with a logged reason — the
   route itself keeps working over plain HTTP)
-- one untyped route (``/now``) to demonstrate the skip warning
+- one untyped route (``/now``) to demonstrate the degraded-JSON bridge:
+  it stays callable as a raw JSON field, and the startup notice names it
+  (add a return annotation to regain a structured type)
 - lifespan startup log (proves lifespan wiring)
 """
 
@@ -335,7 +337,12 @@ def create_app() -> FastAPI:
 
     @app.get("/now")
     async def now():
-        """Untyped on purpose — fastapi-gql-mcp skips this route with a warning."""
+        """Untyped on purpose — bridges as a raw JSON field.
+
+        The startup notice flags it: no typed response contract, so the
+        schema cannot promise fields. Annotate (or set response_model)
+        for a structured, field-selectable type.
+        """
         return {"now": datetime.now(timezone.utc).isoformat()}
 
     # ------------------------------------------- bridging behavior showcases

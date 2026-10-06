@@ -4,14 +4,21 @@
 
 ### Added
 
+- **Untyped routes now bridge instead of skipping.** An endpoint with no
+  return annotation and no `response_model` becomes a raw `JSON` field
+  (with a description noting the missing contract) instead of vanishing
+  from the schema, and joins the degraded-routes startup notice —
+  "no typed response — bridged as raw JSON; add a return annotation or
+  response_model for a structured type" — so an annotation lost to
+  refactoring stays loudly visible rather than silently degrading the
+  schema. Coverage over strictness, with the warning as the quality
+  gate.
 - Routes explicitly annotated `-> None` (204-style deletes and
   side-effect calls) now bridge as a Boolean success field instead of
   being skipped as untyped: the call is the point, and "no response
   body" is an explicit contract — `gone(id): Boolean` returns true on
-  2xx, failures surface as field errors as usual. Endpoints with NO
-  return annotation at all still skip ("no typed response"): an absent
-  annotation is no contract, and silently bridging it would let refactors
-  degrade the schema without a peep.
+  2xx, failures surface as field errors as usual. The invoker parses
+  204/empty bodies to None instead of a synthetic blob.
 
 ### Fixed
 

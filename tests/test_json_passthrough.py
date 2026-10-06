@@ -65,10 +65,12 @@ class TestJSONPassthrough:
         assert "loose: JSON" in sdl
         assert 'scalar JSON' in sdl
 
-    async def test_untyped_route_stays_skipped(self):
+    async def test_untyped_route_bridges_as_json(self):
+        """Untyped endpoints bridge as raw JSON (available, not skipped) —
+        flagged in the degraded startup notice instead."""
         handler = await make_handler()
         sdl = handler.get_sdl()
-        assert "untyped" not in sdl
+        assert "untyped: JSON" in sdl
 
     async def test_nested_model_dict_field_becomes_json(self):
         handler = await make_handler()

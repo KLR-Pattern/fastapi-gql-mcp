@@ -332,7 +332,13 @@ class RouterScanner:
         # way out) turns a silent downgrade into an actionable one.
         degraded = []
         for r in routes:
-            if r.response_filter:
+            if r.response_annotation is Any:
+                degraded.append(
+                    f"{r.method} {r.path}: no typed response — bridged as raw "
+                    "JSON; add a return annotation or response_model for a "
+                    "structured type"
+                )
+            elif r.response_filter:
                 degraded.append(
                     f"{r.method} {r.path}: response filtered via {r.response_filter}"
                 )
@@ -507,9 +513,12 @@ class RouterScanner:
             raw = inspect.signature(route.endpoint).return_annotation
             # `-> None` (and its string form under future-annotations) is an
             # EXPLICIT "no response body" contract — bridged as a Boolean
-            # success field. An EMPTY annotation is no contract at all and
-            # stays skipped ("no typed response").
+            # success field. No annotation at all still bridges, as the JSON
+            # scalar via the Any marker: available rather than skipped, and
+            # flagged in the degraded-routes startup notice so an annotation
+            # lost to refactoring stays visible.
             if raw is None or raw == "None":
                 return type(None)
-            return get_typed_return_annotation(route.endpoint)
+            typed = get_typed_return_annotation(route.endpoint)
+            return Any if typed is None else typed
         return response_model

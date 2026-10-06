@@ -275,12 +275,12 @@ class TestBodylessResponse:
 
         return app
 
-    def test_void_bridges_but_untyped_still_skips(self):
+    def test_void_bridges_and_untyped_bridges_as_json(self):
         from fastapi_gql_mcp.scanner import RouterScanner
 
         routes, skips = RouterScanner(self._app(), allow_mutation=True).scan()
-        assert {r.field_name for r in routes} == {"gone", "missing", "ping"}
-        assert any("no typed response" in s.reason for s in skips)
+        assert {r.field_name for r in routes} == {"gone", "missing", "ping", "untyped"}
+        assert skips == []  # untyped now bridges as raw JSON, not skipped
 
     async def test_void_mutation_returns_true(self):
         handler = RouterGraphQLHandler(self._app(), allow_mutation=True)

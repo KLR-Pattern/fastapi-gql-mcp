@@ -125,6 +125,26 @@ def _leaf_field(
                 "This endpoint is deprecated." if route.deprecated else None
             ),
         )
+    if route.response_annotation is Any:
+        # No return annotation / response_model: bridge whatever arrives as
+        # raw JSON rather than skipping — and tell agents (and the startup
+        # log) that a typed contract would unlock a structured, selectable
+        # field.
+        note = (
+            "Returns raw JSON: this endpoint declares no response type. "
+            "Add a return annotation or response_model for a structured, "
+            "field-selectable type."
+        )
+        description = f"{description}\n\n{note}" if description else note
+        return GraphQLField(
+            GraphQLJSON,
+            args=_arguments(route, types),
+            resolve=_resolver(route, invoker),
+            description=description,
+            deprecation_reason=(
+                "This endpoint is deprecated." if route.deprecated else None
+            ),
+        )
     notes: list[str] = []
     if route.response_filter:
         # Serialization filters (exclude_unset/include/...) reshape the JSON
