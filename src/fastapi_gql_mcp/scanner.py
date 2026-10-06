@@ -303,14 +303,18 @@ class RouterScanner:
                 skips.append(
                     SkipRecord(
                         r.path, method,
-                        "mutation endpoint not matched by mutation_include globs",
+                        "mutation endpoint not matched by mutation_include globs "
+                        "(widen the pattern, or pass mutation_include=None to allow all)",
                     )
                 )
                 continue
 
             if not r.include_in_schema and not self._include_hidden:
                 skips.append(
-                    SkipRecord(r.path, method, "hidden route (include_in_schema=False)")
+                    SkipRecord(
+                r.path, method,
+                "hidden route (include_in_schema=False; pass include_hidden=True to expose it)",
+            )
                 )
                 continue
 
@@ -373,14 +377,20 @@ class RouterScanner:
             if _param_required(p.field_info):
                 skip(
                     f"required header/cookie parameter "
-                    f"'{p.validation_alias or p.alias or p.name}' cannot be a GraphQL argument"
+                    f"'{p.validation_alias or p.alias or p.name}' cannot be a GraphQL "
+                    f"argument — make it optional (caller credentials ride "
+                    f"passthrough_headers instead of GraphQL arguments)"
                 )
                 return None
 
         for p in path_p:
             annotation = p.field_info.annotation
             if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-                skip(f"path parameter model '{annotation.__name__}' is not supported")
+                skip(
+                f"path parameter model '{annotation.__name__}' is not supported "
+                f"— use scalar path parameters (str/int/uuid) and accept the "
+                f"model inside the handler"
+            )
                 return None
         for p in query_p:
             annotation = p.field_info.annotation
@@ -391,7 +401,9 @@ class RouterScanner:
                 if len(query_p) != 1:
                     skip(
                         f"query parameter model '{annotation.__name__}' mixed with "
-                        f"plain query parameters is not supported"
+                        f"plain query parameters is not supported — move the "
+                        f"plain parameters into the model (FastAPI itself "
+                        f"rejects the mixed form on the wire)"
                     )
                     return None
         for p in body_p:
@@ -405,20 +417,30 @@ class RouterScanner:
                 name = p.validation_alias or p.alias or p.name
                 skip(
                     f"form/file parameter '{name}' cannot be bridged "
-                    f"(the invoker sends JSON bodies only)"
+                    f"(the invoker sends JSON bodies only) — the route stays "
+                    f"available over plain HTTP"
                 )
                 return None
             annotation = p.field_info.annotation
             if annotation is None:
-                skip("body parameter without a typed annotation")
+                skip(
+                "body parameter without a typed annotation — annotate it "
+                "(e.g. payload: MyModel)"
+            )
                 return None
 
         response_annotation = self._response_annotation(route)
         if response_annotation is None:
-            skip("no typed response (response_model or return annotation required)")
+            skip(
+                "no typed response (response_model or return annotation required) "
+                "— return a typed model or set response_model"
+            )
             return None
         if isinstance(response_annotation, type) and issubclass(response_annotation, Response):
-            skip("returns a raw Response object, no typed body to expose")
+            skip(
+                "returns a raw Response object, no typed body to expose "
+                "— return a typed model (or add response_model) instead"
+            )
             return None
 
         query_params = (

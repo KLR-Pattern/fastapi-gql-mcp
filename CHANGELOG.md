@@ -10,6 +10,14 @@
 
 ### Changed
 
+- Every skip reason now states the remedy, not just the problem — e.g.
+  "query parameter model mixed with plain query parameters is not
+  supported — move the plain parameters into the model (FastAPI itself
+  rejects the mixed form on the wire)"; required-header skips point at
+  passthrough_headers, hidden-route skips at include_hidden, form/file
+  skips note the route stays available over plain HTTP. Startup logs are
+  the only place these explanations surface, so they teach rather than
+  merely report.
 - Parametrized generic models (`Page[Item]`) get clean GraphQL type names
   (`Page_Item`) derived from the generic origin plus argument names,
   instead of the sanitizer mangling the source spelling
