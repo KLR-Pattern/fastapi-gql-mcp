@@ -91,6 +91,8 @@ changes you are shipping.
 - **Commit hygiene**: conventional commits (`feat:`, `fix:`, `docs:`,
   `chore(release):`); CHANGELOG hunks split into the commit they describe
   when a release groups several commits.
+- **Coverage gate**: CI runs pytest with `--cov-fail-under=95` (baseline
+  95.7%); local `uv run pytest` stays ungated for fast partial runs.
 - **Locks**: the repo-root `uv.lock` is committed; `examples/*` and
   `comparison/bench/*` locks are ignored (they carry local path sources).
 - **Known trap**: port 8020 — check `lsof -nP -iTCP:8020 -sTCP:LISTEN`

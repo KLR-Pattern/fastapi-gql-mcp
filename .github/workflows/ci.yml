@@ -52,8 +52,10 @@ jobs:
       - name: Run type checker
         run: uv run mypy src
 
-      - name: Test with pytest
-        run: uv run pytest tests/ -v
+      - name: Test with pytest (coverage gate 95%)
+        run: |
+          uv run pytest tests/ -v --cov=fastapi_gql_mcp \
+            --cov-report=term-missing --cov-fail-under=95
 
   # Guards the demo (and examples' syntax) against framework API drift. The
   # demo is the framework's first real consumer; if a public API is renamed or
