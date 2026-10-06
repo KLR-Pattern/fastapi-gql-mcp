@@ -37,6 +37,11 @@ agents get:
 - **real auth** — queries run through the actual ASGI app, so `Depends`,
   middleware and headers apply; pass credentials via per-caller header
   passthrough
+- **nothing disappears** — if a route works over HTTP, it stays callable
+  here: untyped responses, serialization-filtered responses and unions
+  degrade to a documented raw-JSON field (with a startup notice naming the
+  cause and the fix), and `-> None` routes become Boolean success fields —
+  migration keeps its feel instead of routes silently vanishing
 
 ### Compared to the alternatives
 

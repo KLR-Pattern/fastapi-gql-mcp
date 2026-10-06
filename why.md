@@ -6,6 +6,19 @@ GraphQL schema — with zero changes to your code. An agent gets 2-6
 constant tools instead of one tool per endpoint, composes any routes into
 a single query, and runs as the caller with the caller's own credentials.
 
+THE BRIDGING PROMISE
+
+If a route works over HTTP, it stays callable here. The bridge prefers
+coverage over strictness: a response whose shape cannot be statically
+promised (untyped, serialization-filtered, a union) degrades to a
+documented raw-JSON field with a startup notice naming the cause and
+the fix — never a silently vanishing route. `-> None` endpoints bridge
+as Boolean success fields. Routes are dropped only when they cannot be
+called correctly at all (Form/File bodies, which MCP's JSON tool
+arguments cannot express; shapes GraphQL cannot type on the input
+side). Migration should feel like adding a window onto your app, not
+like passing an exam.
+
 THE ORIGIN
 
 We pointed an AI agent at our FastAPI service through an existing MCP
