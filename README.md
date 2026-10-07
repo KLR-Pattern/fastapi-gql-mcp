@@ -402,7 +402,8 @@ uv run mypy src
 
 ## Status
 
-0.7.0 — see [CHANGELOG.md](CHANGELOG.md). Ideas welcome: GraphQL subscriptions
+0.x — breaking changes can land in minor bumps; 1.0 will freeze the public
+API. See [CHANGELOG.md](CHANGELOG.md). Ideas welcome: GraphQL subscriptions
 over SSE routes, response header pass-through, per-domain auth scopes.
 
 Design extracted from [nexusx](https://github.com/KLR-Pattern/nexusx)
