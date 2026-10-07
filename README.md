@@ -377,8 +377,8 @@ including **full documentation coverage** so all four description chains are
 inspectable in GraphiQL:
 
 ```bash
-uv run --extra mcp python -m examples.shop                      # REST + /mcp/ + /graphiql + /graphql on :8010
-uv run --extra mcp python -m examples.shop.mcp_walkthrough  # agent's-eye MCP walkthrough, no client needed
+uv run --extra mcp python -m examples.shop                     # REST + /mcp/ + /graphiql + /graphql on :8010
+uv run --extra mcp python -m examples.shop.mcp_walkthrough     # agent's-eye MCP walkthrough, no client needed
 ```
 
 `python -m examples.shop` prints all endpoint URLs and serves the grouped
@@ -402,7 +402,7 @@ uv run mypy src
 
 ## Status
 
-0.4.0 — see [CHANGELOG.md](CHANGELOG.md). Ideas welcome: GraphQL subscriptions
+0.7.0 — see [CHANGELOG.md](CHANGELOG.md). Ideas welcome: GraphQL subscriptions
 over SSE routes, response header pass-through, per-domain auth scopes.
 
 Design extracted from [nexusx](https://github.com/KLR-Pattern/nexusx)
