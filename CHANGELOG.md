@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **Startup-notice showcase in `examples/shop`**: one route per notice
+  reason, so booting the demo prints every warning the scanner can emit —
+  six skips (form/file, raw `Response` return, required header param,
+  hidden route, query model mixed with plain params, `set[int]` input) and
+  three raw-JSON bridges (untyped, response-filtered, union response) plus
+  the union-field notice (`SearchHit.hit`).
+
 ### Changed
 
 - **`demo/` merged into `examples/shop/`.** All runnable demonstrations now

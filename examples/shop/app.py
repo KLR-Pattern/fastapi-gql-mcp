@@ -21,6 +21,13 @@ Feature coverage on purpose:
 - one untyped route (``/now``) to demonstrate the degraded-JSON bridge:
   it stays callable as a raw JSON field, and the startup notice names it
   (add a return annotation to regain a structured type)
+- **startup-notice showcase**: one route per remaining notice reason —
+  union response (``/lookup/{ref}``) and union model field (``/search/{term}``)
+  bridge as raw JSON; raw ``Response`` return (``/banner.txt``), required
+  header param (``/telemetry``), hidden route (``/internal/metrics``),
+  query model mixed with plain params (``/price-watch``) and an unsupported
+  input type (``/alerts``, ``set[int]``) skip. Boot the server and read
+  the log lines.
 - lifespan startup log (proves lifespan wiring)
 """
 
@@ -41,6 +48,7 @@ from fastapi import (
     Path,
     Query,
 )
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 DEMO_TOKEN = "demo-secret"
@@ -140,6 +148,26 @@ class ProductTag(BaseModel):
         default=None, description="active discount code, when on sale"
     )
     featured: bool = Field(default=False, description="highlighted on the front page")
+
+
+class SearchHit(BaseModel):
+    """One search result — a user or a product, whichever matched first."""
+
+    hit: UserOut | ProductOut = Field(
+        description="the matched record; union field, exposed as raw JSON"
+    )
+
+
+class AlertCreate(BaseModel):
+    """Payload for registering price alerts."""
+
+    watched: set[int] = Field(description="product ids to watch (JSON array)")
+
+
+class PriceFilter(BaseModel):
+    """Price-side filters (Query Parameter Model — mixed showcase)."""
+
+    currency: str | None = Field(default=None, description="iso currency code")
 
 
 # ------------------------------------------------------------------------ auth
@@ -408,6 +436,113 @@ def create_app() -> FastAPI:
         working over plain HTTP.
         """
         return {"product_id": product_id, "size": len(image)}
+
+    # ---------------------------------------------- startup-notice showcase
+    #
+    # One route per startup notice: together with the routes above, every
+    # skip reason and every raw-JSON bridge reason from the README capability
+    # table fires at startup — boot the server and read the log lines.
+
+    @app.get("/lookup/{ref}", tags=["shop:catalog"])
+    async def lookup(ref: Annotated[str, Path(description="u<id> or p<id>")]) -> (
+        UserOut | ProductOut
+    ):
+        """Polymorphic lookup — how a union RESPONSE is bridged.
+
+        ``UserOut | ProductOut`` promises two shapes for one field, and a
+        GraphQL field must pick exactly one type. The bridge keeps the field
+        callable as a raw ``JSON`` scalar, and the startup notice names the
+        route with the fix (one model per shape).
+        """
+        try:
+            key = int(ref[1:])
+        except ValueError:
+            raise HTTPException(status_code=404, detail="ref must be u<id> or p<id>")
+        if ref[:1] == "u":
+            user = app.state.users.get(key)
+            if user is None:
+                raise HTTPException(status_code=404, detail="no such user")
+            return UserOut.model_validate(user)
+        if ref[:1] == "p":
+            product = app.state.products.get(key)
+            if product is None:
+                raise HTTPException(status_code=404, detail="no such product")
+            return ProductOut.model_validate(product)
+        raise HTTPException(status_code=404, detail="ref must be u<id> or p<id>")
+
+    @app.get("/search/{term}", response_model=SearchHit, tags=["shop:catalog"])
+    async def search(
+        term: Annotated[str, Path(description="case-insensitive name fragment")],
+    ) -> SearchHit:
+        """First name match across users and products — union FIELD bridge.
+
+        The route's own type is a model, but ``SearchHit.hit`` is a union
+        field. The bridge keeps the field callable as a raw ``JSON`` scalar,
+        and the startup notice names the field with the fix.
+        """
+        for u in app.state.users.values():
+            if term.lower() in u["name"].lower():
+                return SearchHit(hit=UserOut.model_validate(u))
+        for p in app.state.products.values():
+            if term.lower() in p["name"].lower():
+                return SearchHit(hit=ProductOut.model_validate(p))
+        raise HTTPException(status_code=404, detail="no match")
+
+    @app.get("/banner.txt")
+    async def banner() -> PlainTextResponse:
+        """Plain-text banner — a raw ``Response`` return is skipped.
+
+        A ``Response`` return promises bytes on the wire, not a typed body;
+        there are no fields to expose. The scanner skips the route with that
+        reason; plain HTTP keeps serving it.
+        """
+        return PlainTextResponse("everything must go — 20% off this week\n")
+
+    @app.get("/telemetry")
+    async def telemetry(
+        x_client_version: Annotated[str, Header(description="calling client build")],
+    ) -> dict[str, str]:
+        """Client telemetry sink — a REQUIRED header param is skipped.
+
+        Headers are not GraphQL arguments. A required one would make the
+        field uncallable (nothing could supply it), so the scanner skips the
+        route. Make headers optional; caller credentials ride
+        ``passthrough_headers`` instead.
+        """
+        return {"client_version": x_client_version}
+
+    @app.get("/internal/metrics", include_in_schema=False)
+    async def internal_metrics() -> dict[str, int]:
+        """Ops-only metrics — hidden routes are skipped by default.
+
+        ``include_in_schema=False`` means "not part of the public contract";
+        the scanner honors it (pass ``include_hidden=True`` to expose).
+        """
+        return {"orders": len(app.state.orders), "users": len(app.state.users)}
+
+    @app.get("/price-watch")
+    async def price_watch(
+        filters: Annotated[PriceFilter, Query(description="price-side filters")],
+        limit: int = 5,
+    ) -> dict[str, int]:
+        """Query model mixed with a plain param — skipped.
+
+        FastAPI flattens a LONE query model into individual query keys; mixed
+        with plain params it has no wire shape at all (requests 422 asking
+        for a literal ``filters`` key). The scanner skips the route with the
+        fix: move the plain parameters into the model.
+        """
+        return {"limit": limit}
+
+    @app.post("/alerts")
+    async def create_price_alert(payload: AlertCreate) -> dict[str, int]:
+        """Register a price alert — an unsupported INPUT type is skipped.
+
+        ``watched: set[int]`` is fine for pydantic over HTTP (a JSON array of
+        product ids), but GraphQL has no set input; guessing ``list`` would
+        change semantics, so the scanner skips the route and says so.
+        """
+        return {"watching": len(payload.watched)}
 
     return app
 
