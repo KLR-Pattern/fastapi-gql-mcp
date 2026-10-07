@@ -12,7 +12,6 @@ on:
     paths-ignore:
       - 'src/fastapi_gql_mcp/**'
       - 'tests/**'
-      - 'demo/**'
       - 'examples/**'
       - 'pyproject.toml'
       - 'uv.lock'

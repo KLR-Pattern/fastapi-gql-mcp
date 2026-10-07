@@ -1,6 +1,6 @@
 """An agent's-eye walkthrough of the demo app over MCP — no client needed.
 
-    uv run --extra mcp python -m demo.mcp_walkthrough
+    uv run --extra mcp python -m examples.shop.mcp_walkthrough
 
 Drives the MCP server with an in-memory client through every layer:
 domains -> operations -> schema fragments -> composed queries -> mutation.
@@ -16,7 +16,7 @@ from asgi_lifespan import LifespanManager
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
-from demo.app import DEMO_TOKEN, create_app
+from examples.shop.app import DEMO_TOKEN, create_app
 from fastapi_gql_mcp import RouterMCP
 
 

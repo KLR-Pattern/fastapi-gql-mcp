@@ -5,7 +5,6 @@ on:
     paths:
       - 'src/fastapi_gql_mcp/**'
       - 'tests/**'
-      - 'demo/**'
       - 'examples/**'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -14,7 +13,6 @@ on:
     paths:
       - 'src/fastapi_gql_mcp/**'
       - 'tests/**'
-      - 'demo/**'
       - 'examples/**'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -85,7 +83,7 @@ jobs:
 
       - name: Demo app builds against working-copy framework
         run: |
-          uv run python -c "import demo.app; print(f'demo builds: {len(demo.app.app.routes)} routes')"
+          uv run python -c "import examples.shop.app; print(f'demo builds: {len(examples.shop.app.app.routes)} routes')"
 
       - name: Compile all example sources
         run: uv run python -m compileall -q examples

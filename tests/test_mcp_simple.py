@@ -351,16 +351,14 @@ class TestMountTo:
         import httpx
         from asgi_lifespan import LifespanManager
 
-        from demo.app import create_app
-
-        demo_app = create_app()
-        mcp = RouterMCP(demo_app, name="mounted", include=["/products*"])
-        mcp.mount_to(demo_app, "/mcp")
+        host = build_app()
+        mcp = RouterMCP(host, name="mounted", include=["/users*"])
+        mcp.mount_to(host, "/mcp")
         # Same-app mount must disable the invoker's own lifespan management.
         assert mcp.handler.invoker.manage_lifespan is False
 
-        async with LifespanManager(demo_app):
-            transport = httpx.ASGITransport(app=demo_app)
+        async with LifespanManager(host):
+            transport = httpx.ASGITransport(app=host)
             async with httpx.AsyncClient(
                 transport=transport, base_url="http://test"
             ) as client:
@@ -385,20 +383,18 @@ class TestMountTo:
         import httpx
         from asgi_lifespan import LifespanManager
 
-        from demo.app import create_app
+        host = build_app()
+        mcp = RouterMCP(host, name="mounted2", include=["/users*"])
+        mcp.mount_to(host, "/mcp")
 
-        demo_app = create_app()
-        mcp = RouterMCP(demo_app, name="mounted2", include=["/products*"])
-        mcp.mount_to(demo_app, "/mcp")
-
-        async with LifespanManager(demo_app):
-            transport = httpx.ASGITransport(app=demo_app)
+        async with LifespanManager(host):
+            transport = httpx.ASGITransport(app=host)
             async with httpx.AsyncClient(
                 transport=transport, base_url="http://test"
             ) as client:
-                response = await client.get("/products")
+                response = await client.get("/users")
         assert response.status_code == 200
-        assert response.json()[0]["name"] == "espresso machine"
+        assert response.json()[0]["name"] == "alice"
 
 
 class TestMutationWhitelist:

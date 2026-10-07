@@ -1,7 +1,7 @@
 """The all-mounted demo server: REST + MCP + GraphiQL + GraphQL on one app.
 
-Run with ``uv run --extra mcp python -m demo`` (or
-``uv run --extra mcp uvicorn demo.server:app --port 8010``).
+Run with ``uv run --extra mcp python -m examples.shop`` (or
+``uv run --extra mcp uvicorn examples.shop.server:app --port 8010``).
 
 Endpoints:
 - REST (OpenAPI docs):  http://127.0.0.1:8010/docs
@@ -10,7 +10,7 @@ Endpoints:
 - GraphQL HTTP:         POST http://127.0.0.1:8010/graphql
 """
 
-from demo.app import create_app
+from examples.shop.app import create_app
 from fastapi_gql_mcp import RouterMCP
 
 app = create_app()

@@ -1,6 +1,6 @@
 """Per-caller JWT passthrough demo — each MCP client acts as its own user.
 
-    uv run --extra mcp python -m demo.jwt_passthrough
+    uv run --extra mcp python -m examples.shop.jwt_passthrough
 
 Scenario: an orders API where ``/me`` and ``/orders`` identify the caller by
 their Bearer JWT. The MCP server is configured with

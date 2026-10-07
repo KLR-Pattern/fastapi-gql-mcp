@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- **`demo/` merged into `examples/shop/`.** All runnable demonstrations now
+  live under one `examples/` tree (repo-only move, no library change; run
+  `python -m examples.shop` / `examples.shop.mcp_walkthrough`). Framework
+  tests no longer import demo code — the two `mount_to` tests build their
+  own app, so `tests/` depends on nothing outside `tests/` and `src/`.
+
 ## 0.7.0 (2026-10-06)
 
 ### Added

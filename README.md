@@ -371,18 +371,18 @@ endpoint.
 
 ## Demo
 
-The `demo/` directory runs a small shop app (users / catalog / orders / stats,
-auth via `x-token: demo-secret`) with every feature in play — including **full
-documentation coverage** so all four description chains are inspectable in
-GraphiQL:
+[`examples/shop`](./examples/shop/) runs a small shop app (users / catalog /
+orders / stats, auth via `x-token: demo-secret`) with every feature in play —
+including **full documentation coverage** so all four description chains are
+inspectable in GraphiQL:
 
 ```bash
-uv run --extra mcp python -m demo               # REST + /mcp/ + /graphiql + /graphql on :8010
-uv run --extra mcp python -m demo.mcp_walkthrough  # agent's-eye MCP walkthrough, no client needed
+uv run --extra mcp python -m examples.shop                      # REST + /mcp/ + /graphiql + /graphql on :8010
+uv run --extra mcp python -m examples.shop.mcp_walkthrough  # agent's-eye MCP walkthrough, no client needed
 ```
 
-`python -m demo` prints all endpoint URLs and serves the grouped schema;
-`/now` is untyped on purpose so the skip warning is visible at startup.
+`python -m examples.shop` prints all endpoint URLs and serves the grouped
+schema; `/now` is untyped on purpose so the skip warning is visible at startup.
 
 For the full consumer experience — a real app with **GitHub OAuth login,
 session cookies, and MCP OAuth (Claude Code's browser login flow)** — see

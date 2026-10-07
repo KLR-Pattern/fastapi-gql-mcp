@@ -1,4 +1,4 @@
-"""Run the full demo server: ``uv run --extra mcp python -m demo``."""
+"""Run the full demo server: ``uv run --extra mcp python -m examples.shop``."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def main() -> None:
         "  auth: orders & writes need header x-token: demo-secret\n"
         "  (Ctrl-C to stop)\n",
     )
-    uvicorn.run("demo.server:app", host="127.0.0.1", port=port)
+    uvicorn.run("examples.shop.server:app", host="127.0.0.1", port=port)
 
 
 if __name__ == "__main__":
