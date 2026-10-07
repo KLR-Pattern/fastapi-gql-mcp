@@ -55,11 +55,15 @@ class RouterMCP:
             insensitive) MCP/GraphQL callers may forward into route calls.
             ``None`` (default) forwards ``authorization`` — each client acts
             as its own JWT user, the FastAPI security schemes doing the
-            verifying. Pass ``[]`` to disable forwarding entirely. With no
-            HTTP request context (in-memory client) nothing is forwarded:
-            protected routes answer 401. Protocol headers (``content-type``
-            / ``accept``) are refused even if whitelisted — the invoker
-            owns them, and a forwarded value would retype the JSON request.
+            verifying. Session cookies ride the ``Cookie:`` request header,
+            so cookie-authenticated apps add the literal name:
+            ``passthrough_headers=["authorization", "cookie"]`` (wired
+            example: examples/notes_oauth). Pass ``[]`` to disable
+            forwarding entirely. With no HTTP request context (in-memory
+            client) nothing is forwarded: protected routes answer 401.
+            Protocol headers (``content-type`` / ``accept``) are refused
+            even if whitelisted — the invoker owns them, and a forwarded
+            value would retype the JSON request.
         request_timeout: Per-route-call timeout in seconds (default 30,
             ``None`` disables). Enforced with asyncio.wait_for — httpx's
             own timeout is inert on the in-process ASGI transport.

@@ -279,6 +279,16 @@ verifiers, and this bridge never holds or manages tokens of its own.
   caller, exactly as they would over HTTP. An explicitly empty list disables
   forwarding; headers are matched case-insensitively and only whitelisted
   names ever reach a route (no smuggling `x-internal-token` past the bridge).
+- **Session cookies ride a header — whitelist `"cookie"`** (the common
+  trip-up): on the wire a browser session *is* the `Cookie:` request header,
+  so cookie-authenticated apps forward it with
+  `passthrough_headers=["authorization", "cookie"]`. The default forwards
+  `authorization` only — with a session-cookie app, protected routes answer
+  `HTTP_401` over MCP until `cookie` is listed. FastAPI's `Cookie()` route
+  parameters are the other, unrelated cookie: like `Header()` parameters
+  they never become GraphQL arguments. The `POST /graphql` face (and
+  GraphiQL) share the same whitelist, so browser sessions flow through it
+  the same way. Wired example: [examples/notes_oauth](./examples/notes_oauth/).
 - **Without credentials, protected routes fail** — field errors like
   `HTTP_401` in query results; nothing falls back to a server-side identity.
 - **Machines without a user context** configure the service credential on the
