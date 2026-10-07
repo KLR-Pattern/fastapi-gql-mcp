@@ -31,14 +31,14 @@ async def main() -> None:
             assert data["notes"]["mine"]["list_notes"] is None, "expected 401-nulled field"
             assert r.json()["errors"][0]["extensions"]["code"] == "HTTP_401"
             assert data["meta"]["stats"]["users"] >= 1, "public field must survive"
-            print("① 无 cookie: notes 字段 401 置空, 公开字段正常 ✓")
+            print("① no cookie: notes field nulled by 401, public field intact ✓")
 
             r = await c.post(
                 "/graphql", json={"query": NOTES_QUERY}, headers={"cookie": COOKIE}
             )
             data = r.json()["data"]
             assert data["notes"]["mine"]["list_notes"] == [], "fresh user starts empty"
-            print("② 带 cookie: 受保护查询成功（owner 隔离为空列表） ✓")
+            print("② with cookie: protected query succeeds (owner isolation -> empty list) ✓")
 
         from app.config import mcp_oauth_configured
 
@@ -46,7 +46,7 @@ async def main() -> None:
             # With the OAuth proxy on, the MCP endpoint only admits clients
             # that completed the interactive login — that flow is tested from
             # Claude Code, not headless.
-            print("③④⑤ MCP: 跳过 — OAuth 登录已启用（用 Claude Code 交互式验证） ✓")
+            print("③④⑤ MCP: skipped — OAuth login enabled (verified interactively from Claude Code) ✓")
         else:
             from fastmcp.client.transports import StreamableHttpTransport
 
@@ -66,7 +66,7 @@ async def main() -> None:
                     ).content[0].text
                 )
                 assert result["success"] is True
-                print("③ MCP(带 cookie 头): graphql_query 走受保护路由 ✓")
+                print("③ MCP (cookie header): graphql_query through the protected route ✓")
 
                 created = json.loads(
                     (
@@ -82,7 +82,7 @@ async def main() -> None:
                 created_note = created["data"]["data"]["notes"]["mine"]["create_note"]
                 note_id = created_note["id"]
                 assert created_note["owner"] == "smoke-user"
-                print(f"④ MCP mutation 以本人身份建笔记 id={note_id} ✓")
+                print(f"④ MCP mutation creates a note as the caller id={note_id} ✓")
 
                 deleted = json.loads(
                     (
@@ -96,9 +96,9 @@ async def main() -> None:
                     ).content[0].text
                 )
                 assert deleted["data"]["data"]["notes"]["mine"]["delete_note"]["id"] == note_id
-                print("⑤ MCP mutation 删除本人笔记 ✓")
+                print("⑤ MCP mutation deletes the caller's own note ✓")
 
-    print("\nSMOKE OK — 全链路（除 GitHub 跳转外）验证通过")
+    print("\nSMOKE OK — full flow verified (except the GitHub redirect)")
 
 
 if __name__ == "__main__":
