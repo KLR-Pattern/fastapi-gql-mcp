@@ -170,7 +170,10 @@ class RouterMCP:
         return "simple"
 
     @property
-    def mode(self) -> Literal["simple", "progressive"]:
+    def resolved_mode(self) -> Literal["simple", "progressive"]:
+        """The mode actually in effect — ``auto`` is already resolved here,
+        so this never returns ``auto`` (unlike the ``mode`` constructor
+        argument, which records what was requested)."""
         return self._resolved_mode
 
     def _build_mcp(self, name: str, allow_mutation: bool, auth: Any | None = None) -> Any:

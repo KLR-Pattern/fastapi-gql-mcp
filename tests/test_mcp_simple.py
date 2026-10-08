@@ -163,7 +163,7 @@ class TestMutationTool:
 class TestServerBehavior:
     async def test_auto_mode_small_app_is_simple(self):
         mcp = RouterMCP(build_app(), name="ro")
-        assert mcp.mode == "simple"
+        assert mcp.resolved_mode == "simple"
 
     async def test_auto_mode_big_app_goes_progressive(self):
         big = FastAPI()
@@ -183,7 +183,7 @@ class TestServerBehavior:
             big.get(f"/thing{i}", response_model=Out)(make_handler(i))
 
         mcp = RouterMCP(big, name="big", progressive_threshold=25)
-        assert mcp.mode == "progressive"
+        assert mcp.resolved_mode == "progressive"
         async with Client(mcp.mcp) as client:
             tools = [t.name for t in await client.list_tools()]
         assert "list_domains" in tools and "graphql_query" in tools
@@ -213,7 +213,7 @@ class TestServerBehavior:
 
         mcp = RouterMCP(app, name="inc", progressive_threshold=25)
         assert len(mcp.handler.routes) == 30
-        assert mcp.mode == "progressive"
+        assert mcp.resolved_mode == "progressive"
 
     async def test_auto_mode_respects_include_filter(self):
         """Route count for the threshold is the count that ENTERS the schema
@@ -237,7 +237,7 @@ class TestServerBehavior:
             big, name="filtered", include=["/thing0", "/thing1", "/thing2"]
         )
         assert len(mcp.handler.routes) == 3
-        assert mcp.mode == "simple"
+        assert mcp.resolved_mode == "simple"
 
     async def test_domains_registry_built(self, mcp):
         summary = mcp.domains.summary()
@@ -505,7 +505,7 @@ class TestTagFiltering:
 
         mcp = RouterMCP(big, name="core-only", include_tags=["core"])
         assert len(mcp.handler.routes) == 4
-        assert mcp.mode == "simple"
+        assert mcp.resolved_mode == "simple"
 
     async def test_two_instances_same_app_different_tags(self):
         """The motivating scenario: one app, one MCP deployment per use

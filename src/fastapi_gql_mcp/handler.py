@@ -31,6 +31,7 @@ from fastapi_gql_mcp.scanner import (
     RouteInfo,
     RouterScanner,
     SkipRecord,
+    _readiness_report,
 )
 from fastapi_gql_mcp.schema_builder import GQLMCPConfigError, SchemaBuilder
 from fastapi_gql_mcp.type_builder import TypeBuilder
@@ -116,9 +117,12 @@ class RouterGraphQLHandler:
 
     @property
     def skips(self) -> list[SkipRecord]:
-        """Routes excluded from the schema, with reasons — the scanner's
-        report, so callers can assert nothing disappeared unexpectedly
-        (e.g. a new endpoint silently failing to map in CI)."""
+        """Routes excluded from the schema, with reasons — the light lens
+        over the scanner's report, so callers can assert nothing
+        disappeared unexpectedly (e.g. a new endpoint silently failing to
+        map in CI). A strict subset of ``readiness().skips``; prefer
+        ``readiness()`` for the full audit (it also covers degraded
+        routes and fields)."""
         return list(self._skips)
 
     def readiness(self) -> ReadinessReport:
@@ -126,7 +130,7 @@ class RouterGraphQLHandler:
         re-scan, no re-build): skipped routes, raw-JSON bridges, degraded
         model fields. ``RouterScanner(app).readiness()`` runs the same
         audit standalone, without constructing a handler."""
-        return ReadinessReport.from_scan(self._routes, self._skips, self._types)
+        return _readiness_report(self._routes, self._skips, self._types)
 
     @property
     def invoker(self) -> RouteInvoker:

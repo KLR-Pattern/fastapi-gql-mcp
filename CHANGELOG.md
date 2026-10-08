@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- ***(breaking)*** `RouterMCP.mode` property renamed to `resolved_mode` —
+  it returns the mode actually in effect and never `"auto"`, unlike the
+  `mode` constructor argument; the old name invited
+  `assert mcp.mode == "auto"`, which could never pass.
+- ***(breaking)*** `ReadinessReport.from_scan` removed from the public
+  surface (added in 0.8.0): assembling a report required scan's internal
+  products (`TypeBuilder`), which callers cannot obtain — the method was
+  unusable externally and produced incomplete reports when forced.
+  `ReadinessReport` is now pure data (three tuples + `ready`); get one
+  from `RouterScanner(app, ...).readiness()` or `handler.readiness()`.
+- `handler.skips` docstring now marks it a strict subset of
+  `readiness().skips` and points to `readiness()` for the full audit.
+
 ## 0.8.0 (2026-10-08)
 
 ### Added

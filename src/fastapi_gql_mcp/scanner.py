@@ -130,9 +130,9 @@ class DegradedRecord:
 class ReadinessReport:
     """The exposure audit the startup notices are built from: which routes
     the bridge skips, which it degrades to raw JSON, and which model fields
-    degrade. Assemble from any scan via ``from_scan`` — the single source
-    shared by ``RouterScanner.readiness()`` (standalone, no handler) and
-    ``RouterGraphQLHandler.readiness()`` (over stored results, no re-scan)."""
+    degrade. Pure data — get one from ``RouterScanner(app).readiness()``
+    (standalone, no handler) or ``handler.readiness()`` (over stored
+    results, no re-scan); the assembly itself is an internal detail."""
 
     skips: tuple[SkipRecord, ...]  # never entered the schema
     degraded: tuple[DegradedRecord, ...]  # in the schema, no field selection
@@ -144,22 +144,23 @@ class ReadinessReport:
         in CI to pin the exposure you expect."""
         return not (self.skips or self.degraded or self.degraded_fields)
 
-    @classmethod
-    def from_scan(
-        cls,
-        routes: Sequence[RouteInfo],
-        skips: Sequence[SkipRecord],
-        types: TypeBuilder,
-    ) -> ReadinessReport:
-        return cls(
-            skips=tuple(skips),
-            degraded=tuple(
-                DegradedRecord(r.path, r.method, r.field_name, reason, tags=r.tags)
-                for r in routes
-                if (reason := _degraded_reason(r)) is not None
-            ),
-            degraded_fields=tuple(types.union_fields),
-        )
+
+def _readiness_report(
+    routes: Sequence[RouteInfo], skips: Sequence[SkipRecord], types: TypeBuilder
+) -> ReadinessReport:
+    """Assemble the report from one scan's three products — the single
+    source shared by ``RouterScanner.readiness()`` and
+    ``RouterGraphQLHandler.readiness()``. Internal on purpose: callers
+    asking for a report should never need scan's intermediates."""
+    return ReadinessReport(
+        skips=tuple(skips),
+        degraded=tuple(
+            DegradedRecord(r.path, r.method, r.field_name, reason, tags=r.tags)
+            for r in routes
+            if (reason := _degraded_reason(r)) is not None
+        ),
+        degraded_fields=tuple(types.union_fields),
+    )
 
 
 def _degraded_reason(route: RouteInfo) -> str | None:
@@ -452,7 +453,7 @@ class RouterScanner:
         the report reflects what IT would expose."""
         types = TypeBuilder()
         routes, skips = self.scan(types)
-        return ReadinessReport.from_scan(routes, skips, types)
+        return _readiness_report(routes, skips, types)
 
     # ----------------------------------------------------------------- helpers
 
