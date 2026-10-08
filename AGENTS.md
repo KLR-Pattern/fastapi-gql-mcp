@@ -43,8 +43,8 @@ changes you are shipping.
    ```
 
 5. **Publish is automatic.** The `v*` tag triggers `.github/workflows/publish.yml`:
-   `uv build` → `uv publish` (token from the `PYPI_PUBLISHER` secret) → a
-   GitHub Release with generated notes. Watch it:
+   `uv build` → `uv publish` (token from the `PYPI_PUBLISHER` secret). No
+   GitHub Release is created — the CHANGELOG is the release notes. Watch it:
 
    ```bash
    gh run watch $(gh run list --workflow publish.yml --limit 1 --json databaseId -q '.[0].databaseId')
