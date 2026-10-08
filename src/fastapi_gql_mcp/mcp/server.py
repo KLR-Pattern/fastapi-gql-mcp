@@ -1,8 +1,9 @@
-"""RouterMCP: the one-line MCP server over a FastAPI app."""
+"""FastAPIMCP: the one-line MCP server over a FastAPI app."""
 
 from __future__ import annotations
 
 import logging
+import warnings
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -40,7 +41,7 @@ def _compose_lifespan(host: FastAPI, sub_http_app: Any) -> None:
     host.router.lifespan_context = combined
 
 
-class RouterMCP:
+class FastAPIMCP:
     """Expose a FastAPI app as an MCP server backed by a GraphQL schema.
 
     Args:
@@ -234,7 +235,7 @@ class RouterMCP:
         """
         if auth_at_root and getattr(self._mcp, "auth", None) is None:
             raise GQLMCPConfigError(
-                "auth_at_root requires RouterMCP(..., auth=...) — no auth provider set"
+                "auth_at_root requires FastAPIMCP(..., auth=...) — no auth provider set"
             )
         if auth_at_root:
             http_app = self._mcp.http_app(path=path)
@@ -297,3 +298,20 @@ class RouterMCP:
             for route in auth.get_well_known_routes():
                 if route.path not in existing:
                     app.router.routes.append(route)
+
+
+class RouterMCP(FastAPIMCP):
+    """Deprecated alias for :class:`FastAPIMCP` — will be removed at 1.0.
+
+    The old name said Router while the class wraps a whole FastAPI app;
+    FastAPIMCP names what it is. Kept as a working subclass so existing
+    imports keep functioning (with a DeprecationWarning)."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        warnings.warn(
+            "RouterMCP is deprecated; use FastAPIMCP (same behavior, "
+            "the class wraps a FastAPI app, not a router).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)

@@ -32,7 +32,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import BaseModel
 
-from fastapi_gql_mcp import RouterMCP
+from fastapi_gql_mcp import FastAPIMCP
 
 PORT = 8011
 USERS = {
@@ -91,7 +91,7 @@ async def header_probe(request: Request, user: str = Depends(current_user)) -> H
     return HeaderProbe(user=user, x_internal_token_seen="x-internal-token" in request.headers)
 
 
-mcp = RouterMCP(
+mcp = FastAPIMCP(
     app,
     name="jwt-passthrough demo",
     passthrough_headers=["authorization"],  # also the default; spelled out here

@@ -17,7 +17,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
 from examples.shop.app import DEMO_TOKEN, create_app
-from fastapi_gql_mcp import RouterMCP
+from fastapi_gql_mcp import FastAPIMCP
 
 
 def show(title: str, payload: object) -> None:
@@ -28,7 +28,7 @@ def show(title: str, payload: object) -> None:
 
 async def main() -> None:
     app = create_app()
-    mcp = RouterMCP(
+    mcp = FastAPIMCP(
         app,
         name="fastapi-gql-mcp demo",
         allow_mutation=True,

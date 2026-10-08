@@ -5,15 +5,18 @@ zero model changes.
 
 ```python
 from fastapi import FastAPI
-from fastapi_gql_mcp import RouterMCP
+from fastapi_gql_mcp import FastAPIMCP
 
 app = FastAPI()
 
 # ... your existing routes ...
 
-mcp = RouterMCP(app, name="my-app")
+mcp = FastAPIMCP(app, name="my-app")
 mcp.run()  # HTTP MCP server with get_schema + graphql_query tools
 ```
+
+> `FastAPIMCP` was named `RouterMCP` through 0.8. The old import still works
+> as a deprecated alias (removed at 1.0) — switch to `FastAPIMCP`.
 
 **Contents** — [Why](#why) · [How it works](#how-it-works) ·
 [Capability boundaries](#capability-boundaries) · [Installation](#installation) · [Usage](#usage) · [Authentication](#authentication) ·
@@ -248,7 +251,7 @@ service, and per-caller credential passthrough needs an HTTP request
 context). Use `mount_to(app, "/mcp")` to serve MCP on the app's own port.
 
 ```python
-mcp = RouterMCP(
+mcp = FastAPIMCP(
     app,
     name="my-app",
     allow_mutation=False,
@@ -288,12 +291,12 @@ mcp.handler.mount_graphql(app)       # GraphiQL at /graphiql + POST /graphql
 ### Multiple MCP deployments over one app
 
 Different MCP consumers often need different slices of the same app. Build
-one `RouterMCP` per use case, each scoped by its own tag filter, and mount
+one `FastAPIMCP` per use case, each scoped by its own tag filter, and mount
 each at its own path — the instances share nothing but the wrapped app:
 
 ```python
-iam = RouterMCP(app, name="iam-api", include_tags=["iam:*"])
-billing = RouterMCP(app, name="billing-api", include_tags=["billing:*"])
+iam = FastAPIMCP(app, name="iam-api", include_tags=["iam:*"])
+billing = FastAPIMCP(app, name="billing-api", include_tags=["billing:*"])
 iam.mount_to(app, "/mcp-iam")        # streamable HTTP at /mcp-iam/
 billing.mount_to(app, "/mcp-billing")
 ```
@@ -400,19 +403,19 @@ Four knobs are built in and on by default:
   execution (measured 1.52ms → 0.69ms on a 2-field query). Execution results
   are never cached — per-call credentials run for real every time.
 
-All four are parameters of `RouterGraphQLHandler` and `RouterMCP`. For
+All four are parameters of `RouterGraphQLHandler` and `FastAPIMCP`. For
 anything policy-shaped, `validation_rules=` on the handler passes extra
 graphql-core validation rules through (they extend the standard set).
 
 For rate limiting and response caps on the **MCP face**, FastMCP's
-middleware suite attaches with zero bridge code — `RouterMCP.mcp` is the
+middleware suite attaches with zero bridge code — `FastAPIMCP.mcp` is the
 underlying `FastMCP` instance:
 
 ```python
 from fastmcp.server.middleware.rate_limiting import RateLimitingMiddleware
 from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 
-mcp = RouterMCP(app)
+mcp = FastAPIMCP(app)
 mcp.mcp.add_middleware(RateLimitingMiddleware(max_requests_per_second=10))
 mcp.mcp.add_middleware(ResponseLimitingMiddleware(max_size=1_000_000))
 ```

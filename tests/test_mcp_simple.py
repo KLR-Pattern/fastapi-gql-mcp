@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastmcp import Client
 from pydantic import BaseModel
 
-from fastapi_gql_mcp import RouterMCP
+from fastapi_gql_mcp import FastAPIMCP, RouterMCP
 
 
 class UserOut(BaseModel):
@@ -55,7 +55,7 @@ def payload(result) -> dict:
 
 @pytest.fixture
 def mcp():
-    return RouterMCP(build_app(), name="test-api", allow_mutation=True)
+    return FastAPIMCP(build_app(), name="test-api", allow_mutation=True)
 
 
 class TestGetSchema:
@@ -154,7 +154,7 @@ class TestMutationTool:
         assert result["data"]["data"]["iam"]["create_user"]["name"] == "carol"
 
     async def test_no_mutation_tool_when_disabled(self):
-        mcp = RouterMCP(build_app(), name="ro")
+        mcp = FastAPIMCP(build_app(), name="ro")
         async with Client(mcp.mcp) as client:
             tools = await client.list_tools()
         assert [t.name for t in tools] == ["get_schema", "graphql_query"]
@@ -162,7 +162,7 @@ class TestMutationTool:
 
 class TestServerBehavior:
     async def test_auto_mode_small_app_is_simple(self):
-        mcp = RouterMCP(build_app(), name="ro")
+        mcp = FastAPIMCP(build_app(), name="ro")
         assert mcp.resolved_mode == "simple"
 
     async def test_auto_mode_big_app_goes_progressive(self):
@@ -182,7 +182,7 @@ class TestServerBehavior:
 
             big.get(f"/thing{i}", response_model=Out)(make_handler(i))
 
-        mcp = RouterMCP(big, name="big", progressive_threshold=25)
+        mcp = FastAPIMCP(big, name="big", progressive_threshold=25)
         assert mcp.resolved_mode == "progressive"
         async with Client(mcp.mcp) as client:
             tools = [t.name for t in await client.list_tools()]
@@ -211,7 +211,7 @@ class TestServerBehavior:
         app = FastAPI()
         app.include_router(sub, prefix="/things")
 
-        mcp = RouterMCP(app, name="inc", progressive_threshold=25)
+        mcp = FastAPIMCP(app, name="inc", progressive_threshold=25)
         assert len(mcp.handler.routes) == 30
         assert mcp.resolved_mode == "progressive"
 
@@ -233,7 +233,7 @@ class TestServerBehavior:
 
             big.get(f"/thing{i}", response_model=Out)(make_handler(i))
 
-        mcp = RouterMCP(
+        mcp = FastAPIMCP(
             big, name="filtered", include=["/thing0", "/thing1", "/thing2"]
         )
         assert len(mcp.handler.routes) == 3
@@ -249,7 +249,7 @@ class TestAuthProviderPassthrough:
         from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider
 
         provider = InMemoryOAuthProvider(base_url="http://t")
-        mcp = RouterMCP(build_app(), name="auth-api", auth=provider)
+        mcp = FastAPIMCP(build_app(), name="auth-api", auth=provider)
         assert mcp.mcp.auth is provider
 
     def test_no_auth_by_default(self, mcp):
@@ -263,7 +263,7 @@ class TestAuthProviderPassthrough:
         from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider
 
         app = FastAPI()
-        mcp = RouterMCP(
+        mcp = FastAPIMCP(
             build_app(), name="auth-api", auth=InMemoryOAuthProvider(base_url="http://localhost:9")
         )
         mcp.mount_to(app, "/mcp")
@@ -284,7 +284,7 @@ class TestAuthProviderPassthrough:
                     assert r.status_code == 200, (path, r.status_code)
 
     def test_auth_at_root_requires_auth(self):
-        mcp = RouterMCP(build_app(), name="no-auth")
+        mcp = FastAPIMCP(build_app(), name="no-auth")
         with pytest.raises(Exception, match="auth_at_root requires"):
             mcp.mount_to(FastAPI(), "/mcp", auth_at_root=True)
 
@@ -302,7 +302,7 @@ class TestAuthProviderPassthrough:
         async def host_callback():
             return {"host": "route-wins"}
 
-        mcp = RouterMCP(
+        mcp = FastAPIMCP(
             build_app(),
             name="auth-api",
             auth=InMemoryOAuthProvider(base_url="http://localhost:9"),
@@ -352,7 +352,7 @@ class TestMountTo:
         from asgi_lifespan import LifespanManager
 
         host = build_app()
-        mcp = RouterMCP(host, name="mounted", include=["/users*"])
+        mcp = FastAPIMCP(host, name="mounted", include=["/users*"])
         mcp.mount_to(host, "/mcp")
         # Same-app mount must disable the invoker's own lifespan management.
         assert mcp.handler.invoker.manage_lifespan is False
@@ -384,7 +384,7 @@ class TestMountTo:
         from asgi_lifespan import LifespanManager
 
         host = build_app()
-        mcp = RouterMCP(host, name="mounted2", include=["/users*"])
+        mcp = FastAPIMCP(host, name="mounted2", include=["/users*"])
         mcp.mount_to(host, "/mcp")
 
         async with LifespanManager(host):
@@ -401,7 +401,7 @@ class TestMutationWhitelist:
     async def test_mutation_include_filters_writes(self):
         app = build_app()  # POST /users is the only write route
 
-        mcp = RouterMCP(
+        mcp = FastAPIMCP(
             app,
             name="wl",
             allow_mutation=True,
@@ -410,7 +410,7 @@ class TestMutationWhitelist:
         sdl = mcp.handler.get_sdl()
         assert "Mutation" not in sdl  # no write route survived the whitelist
 
-        mcp2 = RouterMCP(
+        mcp2 = FastAPIMCP(
             app,
             name="wl2",
             allow_mutation=True,
@@ -420,7 +420,7 @@ class TestMutationWhitelist:
 
     async def test_reads_unaffected_by_whitelist(self):
         app = build_app()
-        mcp = RouterMCP(app, name="wl3", allow_mutation=True, mutation_include=["/none"])
+        mcp = FastAPIMCP(app, name="wl3", allow_mutation=True, mutation_include=["/none"])
         sdl = mcp.handler.get_sdl()
         assert "list_users" in sdl
 
@@ -451,7 +451,7 @@ def build_multi_app() -> FastAPI:
 
 class TestTagFiltering:
     async def test_get_schema_scoped_to_tags(self):
-        mcp = RouterMCP(
+        mcp = FastAPIMCP(
             build_multi_app(), name="iam-api", include_tags=["iam:*"],
             allow_mutation=True,
         )
@@ -463,7 +463,7 @@ class TestTagFiltering:
         assert [d["name"] for d in summary] == ["iam"]
 
     async def test_query_executes_included_route(self):
-        mcp = RouterMCP(build_multi_app(), name="iam-api", include_tags=["iam:*"])
+        mcp = FastAPIMCP(build_multi_app(), name="iam-api", include_tags=["iam:*"])
         async with Client(mcp.mcp) as client:
             result = payload(
                 await client.call_tool(
@@ -477,7 +477,7 @@ class TestTagFiltering:
         ]
 
     async def test_mutation_filtered_out_by_tags(self):
-        mcp = RouterMCP(
+        mcp = FastAPIMCP(
             build_multi_app(), name="billing-api", include_tags=["billing*"],
             allow_mutation=True,
         )
@@ -503,7 +503,7 @@ class TestTagFiltering:
 
             big.get(f"/{name}", response_model=Out, tags=tags)(make_handler(i))
 
-        mcp = RouterMCP(big, name="core-only", include_tags=["core"])
+        mcp = FastAPIMCP(big, name="core-only", include_tags=["core"])
         assert len(mcp.handler.routes) == 4
         assert mcp.resolved_mode == "simple"
 
@@ -511,8 +511,8 @@ class TestTagFiltering:
         """The motivating scenario: one app, one MCP deployment per use
         case, each scoped by its own tag set."""
         app = build_multi_app()
-        iam = RouterMCP(app, name="iam-api", include_tags=["iam:*"])
-        billing = RouterMCP(app, name="billing-api", include_tags=["billing*"])
+        iam = FastAPIMCP(app, name="iam-api", include_tags=["iam:*"])
+        billing = FastAPIMCP(app, name="billing-api", include_tags=["billing*"])
 
         async with Client(iam.mcp) as client:
             result = payload(await client.call_tool("get_schema", {}))
@@ -532,8 +532,8 @@ class TestTagFiltering:
         from asgi_lifespan import LifespanManager
 
         app = build_multi_app()
-        iam = RouterMCP(app, name="iam-api", include_tags=["iam:*"])
-        billing = RouterMCP(app, name="billing-api", include_tags=["billing*"])
+        iam = FastAPIMCP(app, name="iam-api", include_tags=["iam:*"])
+        billing = FastAPIMCP(app, name="billing-api", include_tags=["billing*"])
         iam.mount_to(app, "/mcp-iam")
         billing.mount_to(app, "/mcp-billing")
         assert iam.handler.invoker.manage_lifespan is False
@@ -565,11 +565,19 @@ class TestTagFiltering:
             assert "text/event-stream" in response.headers["content-type"], path
 
 
+class TestDeprecatedAlias:
+    def test_router_mcp_alias_warns_and_works(self):
+        with pytest.warns(DeprecationWarning, match="FastAPIMCP"):
+            mcp = RouterMCP(build_app(), name="alias")
+        assert isinstance(mcp, FastAPIMCP)
+        assert mcp.resolved_mode == "simple"
+
+
 class TestReadiness:
     async def test_report_scoped_to_the_deployment(self):
         """The checklist reflects what THIS deployment would expose: /ping
         (a raw-JSON bridge) is tag-filtered out and never reported."""
-        mcp = RouterMCP(build_multi_app(), name="iam-api", include_tags=["iam:*"])
+        mcp = FastAPIMCP(build_multi_app(), name="iam-api", include_tags=["iam:*"])
         report = mcp.handler.readiness()
         assert [s.path for s in report.skips] == ["/users"]  # POST, mutation off
         assert report.skips[0].tags == ("iam:users",)

@@ -62,7 +62,7 @@ THE STRATEGY: DERIVE, DON'T DECORATE
 
 1. Derive the contract from existing routes — tags become a domain tree,
    function names become field names, docstrings become schema
-   descriptions. RouterMCP(app) is the whole setup.
+   descriptions. FastAPIMCP(app) is the whole setup.
 2. Keep the tool set constant (2-6 tools); the schema is the contract, so
    context stays flat as the API grows.
 3. Execute through the real app, as the caller — auth and middleware

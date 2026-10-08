@@ -21,7 +21,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import BaseModel
 
-from fastapi_gql_mcp import RouterGraphQLHandler, RouterMCP, filter_passthrough_headers
+from fastapi_gql_mcp import FastAPIMCP, RouterGraphQLHandler, filter_passthrough_headers
 
 TOKENS = {"jwt-alice": "alice", "jwt-bob": "bob", "jwt-service": "service"}
 
@@ -268,7 +268,7 @@ class TestAuthPassthroughAdversarial:
 class TestMcpEndToEnd:
     async def test_per_call_authorization_end_to_end(self):
         app = build_app()
-        mcp = RouterMCP(app, name="e2e", passthrough_headers=["authorization"])
+        mcp = FastAPIMCP(app, name="e2e", passthrough_headers=["authorization"])
         mcp.mount_to(app, "/mcp")
         transport = StreamableHttpTransport(
             url="http://testserver/mcp/",
@@ -286,7 +286,7 @@ class TestMcpEndToEnd:
     async def test_disabled_ignores_client_auth(self):
         app = build_app()
         # Default forwards authorization; an explicitly empty sequence opts out.
-        mcp = RouterMCP(app, name="e2e", passthrough_headers=[])
+        mcp = FastAPIMCP(app, name="e2e", passthrough_headers=[])
         mcp.mount_to(app, "/mcp")
         transport = StreamableHttpTransport(
             url="http://testserver/mcp/",
@@ -304,7 +304,7 @@ class TestMcpEndToEnd:
 
     async def test_non_whitelisted_header_not_forwarded(self):
         app = build_app()
-        mcp = RouterMCP(app, name="e2e", passthrough_headers=["authorization"])
+        mcp = FastAPIMCP(app, name="e2e", passthrough_headers=["authorization"])
         mcp.mount_to(app, "/mcp")
         transport = StreamableHttpTransport(
             url="http://testserver/mcp/",
@@ -325,7 +325,7 @@ class TestMcpEndToEnd:
 
     async def test_mutation_tool_passthrough(self):
         app = build_app()
-        mcp = RouterMCP(
+        mcp = FastAPIMCP(
             app,
             name="e2e",
             allow_mutation=True,
@@ -347,7 +347,7 @@ class TestMcpEndToEnd:
         await mcp.handler.aclose()
 
     async def test_in_memory_client_has_no_identity(self):
-        mcp = RouterMCP(build_app(), name="e2e", passthrough_headers=["authorization"])
+        mcp = FastAPIMCP(build_app(), name="e2e", passthrough_headers=["authorization"])
         async with Client(mcp.mcp) as client:
             result = tool_payload(await client.call_tool("graphql_query", {"query": WHOAMI_QUERY}))
         # No HTTP request context: nothing to forward, nothing to fall back

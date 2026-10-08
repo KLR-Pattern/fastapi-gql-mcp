@@ -146,7 +146,7 @@ injects W3C traceparent — see [otel_smoke.md](../otel_smoke.md)).
 `app/main.py`, the wiring block at the bottom:
 
 ```python
-mcp = RouterMCP(app, name="notes-demo", allow_mutation=True,
+mcp = FastAPIMCP(app, name="notes-demo", allow_mutation=True,
                 exclude=["/auth/token"],   # protocol endpoint stays REST-only
                 passthrough_headers=["authorization", "cookie"],
                 auth=mcp_oauth.provider())  # GitHub OAuth 2.1 proxy when configured

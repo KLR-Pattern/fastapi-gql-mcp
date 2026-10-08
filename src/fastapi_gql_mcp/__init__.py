@@ -6,7 +6,7 @@ from importlib.metadata import version as _pkg_version
 from fastapi_gql_mcp.handler import GQLMCPConfigError, RouterGraphQLHandler
 from fastapi_gql_mcp.invoker import RouteInvoker, filter_passthrough_headers
 from fastapi_gql_mcp.mcp.errors import GQLMCPErrors
-from fastapi_gql_mcp.mcp.server import RouterMCP
+from fastapi_gql_mcp.mcp.server import FastAPIMCP, RouterMCP
 from fastapi_gql_mcp.scanner import (
     DegradedRecord,
     ReadinessReport,
@@ -24,12 +24,13 @@ except PackageNotFoundError:  # pragma: no cover - source tree without install
     __version__ = "0.0.0.dev0"
 
 __all__ = [
+    "FastAPIMCP",
+    "RouterMCP",  # deprecated alias, remove at 1.0
     "DegradedRecord",
     "ReadinessReport",
     "RouteInfo",
     "RouteInvoker",
     "RouterGraphQLHandler",
-    "RouterMCP",
     "GQLMCPConfigError",
     "GQLMCPErrors",
     "RouterScanner",

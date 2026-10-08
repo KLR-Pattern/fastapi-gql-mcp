@@ -2,7 +2,7 @@
 
 The library call is the last block — the rest is a plain FastAPI app:
 
-    mcp = RouterMCP(app, name=..., allow_mutation=True,
+    mcp = FastAPIMCP(app, name=..., allow_mutation=True,
                     exclude=["/auth/token"],   # protocol endpoint stays REST-only
                     passthrough_headers=["authorization", "cookie"],
                     auth=mcp_oauth.provider())
@@ -25,7 +25,7 @@ from fastapi import FastAPI
 from app import credentials, mcp_oauth
 from app.auth_routes import router as auth_router
 from app.notes_routes import router as notes_router
-from fastapi_gql_mcp import RouterMCP
+from fastapi_gql_mcp import FastAPIMCP
 
 
 def create_app() -> FastAPI:
@@ -44,7 +44,7 @@ def create_app() -> FastAPI:
     if mcp_auth is not None:
         credentials.register_bearer_verifier(mcp_oauth.proxy_token_user)
 
-    mcp = RouterMCP(
+    mcp = FastAPIMCP(
         app,
         name="notes-demo",
         allow_mutation=True,

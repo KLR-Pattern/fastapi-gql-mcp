@@ -29,7 +29,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import BaseModel
 
-from fastapi_gql_mcp import RouterMCP
+from fastapi_gql_mcp import FastAPIMCP
 
 SECRET = b"test-oauth-secret"
 USERS_DB = {"alice": "wonderland", "bob": "builder"}
@@ -110,8 +110,8 @@ def build_app() -> FastAPI:
     return app
 
 
-def build_mcp(app: FastAPI, *, exclude_oauth: bool = True) -> RouterMCP:
-    mcp = RouterMCP(
+def build_mcp(app: FastAPI, *, exclude_oauth: bool = True) -> FastAPIMCP:
+    mcp = FastAPIMCP(
         app,
         name="oauth-e2e",
         exclude=["/oauth/*", "/login*"] if exclude_oauth else None,
@@ -219,7 +219,7 @@ class TestProtocolEndpointsExcluded:
         that leak structurally; the exclude glob remains defense-in-depth
         for future non-form protocol routes."""
         app = build_app()
-        mcp = RouterMCP(app, name="leaky", allow_mutation=True)
+        mcp = FastAPIMCP(app, name="leaky", allow_mutation=True)
         assert "issue_token" not in mcp.handler.get_sdl()
         assert any(
             s.path == "/oauth/token" and "form/file parameter" in s.reason

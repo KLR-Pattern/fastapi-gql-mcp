@@ -4,6 +4,12 @@
 
 ### Changed
 
+- **`RouterMCP` renamed to `FastAPIMCP`.** The old name said Router while
+  the class wraps a whole FastAPI app and IS the MCP server; `FastAPIMCP`
+  names what it is and matches the package. `RouterMCP` remains as a
+  deprecated subclass (DeprecationWarning on construction, removed at
+  1.0) — existing imports keep working.
+
 - ***(breaking)*** `RouterMCP.mode` property renamed to `resolved_mode` —
   it returns the mode actually in effect and never `"auto"`, unlike the
   `mode` constructor argument; the old name invited

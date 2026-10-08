@@ -8,7 +8,7 @@ from fastapi import FastAPI, Query
 from fastmcp import Client
 from pydantic import BaseModel
 
-from fastapi_gql_mcp import RouterMCP
+from fastapi_gql_mcp import FastAPIMCP
 
 
 class Out(BaseModel):
@@ -44,7 +44,7 @@ def build_app() -> FastAPI:
 
 @pytest.fixture
 def mcp():
-    return RouterMCP(build_app(), name="prog", allow_mutation=True, mode="progressive")
+    return FastAPIMCP(build_app(), name="prog", allow_mutation=True, mode="progressive")
 
 
 def payload(result) -> dict:
@@ -85,7 +85,7 @@ class TestListQueries:
         ):
             return Out(id=1, name="x")
 
-        m = RouterMCP(app, mode="progressive")
+        m = FastAPIMCP(app, mode="progressive")
         async with Client(m.mcp) as client:
             result = payload(await client.call_tool("list_queries", {"domain": "t"}))
         query = result["data"]["queries"][0]
@@ -100,7 +100,7 @@ class TestListQueries:
         async def old():
             return Out(id=1, name="o")
 
-        m = RouterMCP(app, mode="progressive")
+        m = FastAPIMCP(app, mode="progressive")
         async with Client(m.mcp) as client:
             result = payload(await client.call_tool("list_queries", {"domain": "t"}))
         assert result["data"]["queries"][0]["deprecated"] is True

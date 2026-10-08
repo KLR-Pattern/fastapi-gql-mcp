@@ -19,7 +19,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from fastapi_gql_mcp import RouterMCP
+from fastapi_gql_mcp import FastAPIMCP
 
 _exporter = InMemorySpanExporter()
 _provider_installed = False
@@ -57,7 +57,7 @@ QUERY = "{ t { echo_headers } }"
 
 class TestTraceUnity:
     async def test_one_trace_from_tool_to_route(self, spans):
-        mcp = RouterMCP(build_app(), name="otel-e2e")
+        mcp = FastAPIMCP(build_app(), name="otel-e2e")
         async with Client(mcp.mcp) as client:
             await client.call_tool("graphql_query", {"query": QUERY})
 
@@ -80,7 +80,7 @@ class TestTraceUnity:
                     route.context.trace_id}) == 1
 
     async def test_traceparent_reaches_the_route(self, spans):
-        mcp = RouterMCP(build_app(), name="otel-e2e")
+        mcp = FastAPIMCP(build_app(), name="otel-e2e")
         async with Client(mcp.mcp) as client:
             result = json.loads(
                 (await client.call_tool("graphql_query", {"query": QUERY})).content[0].text
@@ -91,7 +91,7 @@ class TestTraceUnity:
     async def test_injection_is_independent_of_passthrough_whitelist(self, spans):
         # bridge-GENERATED context must flow even when NOTHING may be
         # forwarded from the caller
-        mcp = RouterMCP(build_app(), name="otel-e2e", passthrough_headers=[])
+        mcp = FastAPIMCP(build_app(), name="otel-e2e", passthrough_headers=[])
         async with Client(mcp.mcp) as client:
             result = json.loads(
                 (await client.call_tool("graphql_query", {"query": QUERY})).content[0].text
@@ -108,7 +108,7 @@ class TestTraceUnity:
             await asyncio.sleep(2)
             return {}
 
-        mcp = RouterMCP(app, name="otel-e2e", request_timeout=0.1)
+        mcp = FastAPIMCP(app, name="otel-e2e", request_timeout=0.1)
         async with Client(mcp.mcp) as client:
             result = json.loads(
                 (

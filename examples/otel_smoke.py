@@ -42,7 +42,7 @@ import argparse
 import asyncio
 
 # The SDK wiring below is the ONLY observability code needed — the business
-# part (app + RouterMCP) stays untouched. Without an SDK installed, the
+# part (app + FastAPIMCP) stays untouched. Without an SDK installed, the
 # opentelemetry-api layer is a no-op (NonRecordingSpan), so this script
 # degrades to a plain query roundtrip if you drop the --with flags.
 from opentelemetry import trace
@@ -83,7 +83,7 @@ async def run_query() -> None:
     from fastmcp import Client
     from pydantic import BaseModel
 
-    from fastapi_gql_mcp import RouterMCP
+    from fastapi_gql_mcp import FastAPIMCP
 
     class Out(BaseModel):
         id: int
@@ -94,7 +94,7 @@ async def run_query() -> None:
     async def things() -> list[Out]:
         return [Out(id=1)]
 
-    mcp = RouterMCP(app)
+    mcp = FastAPIMCP(app)
 
     async with Client(mcp.mcp) as client:
         result = await client.call_tool(

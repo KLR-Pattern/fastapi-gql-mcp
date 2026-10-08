@@ -13,7 +13,7 @@ from pathlib import Path
 
 from fastmcp import Client
 
-from fastapi_gql_mcp import RouterMCP
+from fastapi_gql_mcp import FastAPIMCP
 
 from shared_app import NOTES, build_app
 
@@ -70,7 +70,7 @@ async def catalog_for(route_count: int) -> dict:
     app = build_app(route_count)
     row: dict = {"routes": route_count}
 
-    simple = RouterMCP(app, name="bench", allow_mutation=True, mode="simple")
+    simple = FastAPIMCP(app, name="bench", allow_mutation=True, mode="simple")
     async with Client(simple.mcp) as client:
         tools = await client.list_tools()
         # full serialization, same approach as the fastapi-mcp side
@@ -85,7 +85,7 @@ async def catalog_for(route_count: int) -> dict:
         row["ours_simple"]["catalog_bytes"] + row["ours_simple"]["sdl_bytes"]
     )
 
-    progressive = RouterMCP(app, name="bench", allow_mutation=True, mode="progressive")
+    progressive = FastAPIMCP(app, name="bench", allow_mutation=True, mode="progressive")
     async with Client(progressive.mcp) as client:
         tools = await client.list_tools()
         payload = {"tools": [t.model_dump(exclude_none=True) for t in tools]}
@@ -120,7 +120,7 @@ async def main() -> dict:
     results["catalog"] = [await catalog_for(n) for n in [5, 10, 25, 50, 100]]
 
     app = build_app(5)
-    simple = RouterMCP(app, name="bench", allow_mutation=True, mode="simple")
+    simple = FastAPIMCP(app, name="bench", allow_mutation=True, mode="simple")
 
     print("== composition ==")
     run_means = []

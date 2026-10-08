@@ -11,11 +11,11 @@ Endpoints:
 """
 
 from examples.shop.app import create_app
-from fastapi_gql_mcp import RouterMCP
+from fastapi_gql_mcp import FastAPIMCP
 
 app = create_app()
 
-mcp = RouterMCP(
+mcp = FastAPIMCP(
     app,
     name="fastapi-gql-mcp demo",
     allow_mutation=True,
