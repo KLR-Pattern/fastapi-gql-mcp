@@ -1,5 +1,6 @@
 """scanner: FastAPI routes -> RouteInfo / SkipRecord."""
 
+from enum import Enum
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, Query
@@ -135,6 +136,103 @@ class TestFiltering:
     def test_exclude_wins_over_include(self):
         routes, _ = scan(build_app(), include=["/items*"], exclude=["/items/{item_id}"])
         assert "/items/{item_id}" not in {r.path for r in routes}
+
+
+class Color(Enum):  # non-str Enum tags must be ignored by tag filtering
+    red = "red"
+
+
+def build_tagged_app() -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/users", response_model=ItemOut, tags=["iam:users"])
+    async def users():
+        return ItemOut(id=1, name="a")
+
+    @app.get("/invoices", response_model=ItemOut, tags=["iam:billing"])
+    async def invoices():
+        return ItemOut(id=2, name="b")
+
+    @app.get("/reports", response_model=ItemOut, tags=["analytics"])
+    async def reports():
+        return ItemOut(id=3, name="c")
+
+    @app.get("/untagged")
+    async def untagged():
+        return {"ok": True}
+
+    @app.get("/enum-tag", tags=[Color.red])
+    async def enum_tag():
+        return {"ok": True}
+
+    @app.post("/users", response_model=ItemOut, tags=["iam:users"])
+    async def create_user(payload: ItemCreate):
+        return ItemOut(id=4, name=payload.name)
+
+    return app
+
+
+class TestTagFiltering:
+    def test_include_tags_glob_prefix(self):
+        routes, _ = scan(build_tagged_app(), include_tags=["iam:*"])
+        assert {r.path for r in routes} == {"/users", "/invoices"}
+
+    def test_include_tags_exact(self):
+        routes, _ = scan(build_tagged_app(), include_tags=["analytics"])
+        assert {r.path for r in routes} == {"/reports"}
+
+    def test_include_tags_drops_untagged_silently(self):
+        routes, skips = scan(build_tagged_app(), include_tags=["iam:*"])
+        paths = {r.path for r in routes}
+        assert "/untagged" not in paths and "/enum-tag" not in paths
+        assert not any(s.path in {"/untagged", "/enum-tag"} for s in skips)
+
+    def test_exclude_tags(self):
+        routes, _ = scan(build_tagged_app(), exclude_tags=["iam:*"])
+        assert {r.path for r in routes} == {"/reports", "/untagged", "/enum-tag"}
+
+    def test_exclude_tags_wins_over_include_tags(self):
+        routes, _ = scan(
+            build_tagged_app(), include_tags=["iam:*"], exclude_tags=["iam:billing"]
+        )
+        assert {r.path for r in routes} == {"/users"}
+
+    def test_tag_filters_and_with_path_filters(self):
+        routes, _ = scan(
+            build_tagged_app(), include=["/users", "/invoices"], include_tags=["analytics"]
+        )
+        assert routes == []
+        routes, _ = scan(
+            build_tagged_app(), include=["/users", "/reports"], include_tags=["iam:*"]
+        )
+        assert {r.path for r in routes} == {"/users"}
+
+    def test_enum_tag_ignored(self):
+        routes, _ = scan(build_tagged_app())  # no filter: enum-tag route scans fine
+        assert "/enum-tag" in {r.path for r in routes}
+        routes, _ = scan(build_tagged_app(), include_tags=["iam:*"])
+        assert "/enum-tag" not in {r.path for r in routes}
+
+    def test_include_tags_empty_drops_everything(self):
+        routes, skips = scan(build_tagged_app(), include_tags=[])
+        assert routes == [] and skips == []
+
+    def test_tag_filter_precedes_mutation_gating(self):
+        # POST /users is tag-filtered out before mutation gating: no skip.
+        _, skips = scan(build_tagged_app(), include_tags=["iam:billing"])
+        assert not any(s.method == "POST" for s in skips)
+        routes, _ = scan(
+            build_tagged_app(), include_tags=["iam:*"], allow_mutation=True
+        )
+        assert by_field(routes, "create_user").is_mutation
+
+    def test_no_tag_skip_records(self):
+        _, skips = scan(
+            build_tagged_app(),
+            include_tags=["iam:*"],
+            exclude_tags=["iam:billing"],
+        )
+        assert not any("tag" in s.reason.lower() for s in skips)
 
 
 class TestSkips:

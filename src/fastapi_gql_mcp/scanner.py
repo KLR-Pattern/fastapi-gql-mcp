@@ -219,6 +219,13 @@ def _matches(path: str, patterns: Sequence[str] | None) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns or ())
 
 
+def _tags_match(tags: Sequence[str], patterns: Sequence[str] | None) -> bool:
+    """A route matches when ANY of its string tags fnmatches ANY pattern
+    ("iam:*" matches "iam:users"; an exact pattern matches too). Empty tags
+    match nothing, so include_tags is a strict whitelist (untagged drops)."""
+    return any(_matches(tag, patterns) for tag in tags)
+
+
 def _iter_api_routes(routes: Iterable[Any]) -> Iterator[Any]:
     """Flatten app.routes into scannable route objects (duck-typed).
 
@@ -250,6 +257,8 @@ class RouterScanner:
         *,
         include: Sequence[str] | None = None,
         exclude: Sequence[str] | None = None,
+        include_tags: Sequence[str] | None = None,
+        exclude_tags: Sequence[str] | None = None,
         allow_mutation: bool = False,
         include_hidden: bool = False,
         mutation_include: Sequence[str] | None = None,
@@ -257,6 +266,8 @@ class RouterScanner:
         self._app = app
         self._include = include
         self._exclude = exclude
+        self._include_tags = include_tags
+        self._exclude_tags = exclude_tags
         self._allow_mutation = allow_mutation
         self._include_hidden = include_hidden
         self._mutation_include = mutation_include
@@ -287,6 +298,17 @@ class RouterScanner:
             if self._exclude and _matches(r.path, self._exclude):
                 continue
             if self._include is not None and not _matches(r.path, self._include):
+                continue
+
+            # Tag filters mirror path filters: config-level, silent drop.
+            # OpenAPI allows Enum tags; only string tags participate (the
+            # same rule as domain grouping in _build_route_info).
+            route_tags = tuple(t for t in (r.tags or ()) if isinstance(t, str))
+            if self._exclude_tags and _tags_match(route_tags, self._exclude_tags):
+                continue
+            if self._include_tags is not None and not _tags_match(
+                route_tags, self._include_tags
+            ):
                 continue
 
             if method in _MUTATION_VERBS and not self._allow_mutation:

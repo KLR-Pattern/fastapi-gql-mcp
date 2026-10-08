@@ -141,6 +141,10 @@ Rules worth knowing:
   that cannot be called correctly at all are skipped, with a logged reason;
   `handler.skips` lists them programmatically for CI assertions.
 - `include`/`exclude` fnmatch globs scope which routes enter the schema.
+  `include_tags`/`exclude_tags` do the same over route tags: a route matches
+  when ANY of its string tags matches ANY pattern (`include_tags=["iam:*"]`
+  keeps `tags=["iam:users"]`), `exclude_tags` wins, untagged routes drop
+  under a tag whitelist, and tag filters AND with path filters.
 - Route tags form a **domain tree** (`tags=["billing:invoice"]`); large apps
   switch to **progressive disclosure** (below).
 - A lone `Annotated[FilterModel, Query()]` flattens into individual query
@@ -197,8 +201,8 @@ exposes them (`path`, `method`, `reason`) for CI assertions.
 | returns a raw `Response` (streaming, plain text) | no typed body to expose |
 | input type GraphQL cannot express (`payload: A \| B`, `set[int]`, …) | GraphQL has no input unions; guessing would fail at runtime |
 
-`include`/`exclude` globs also remove paths by configuration — that is
-filtering you asked for, not a skip.
+`include`/`exclude` globs — and `include_tags`/`exclude_tags` — also remove
+routes by configuration; that is filtering you asked for, not a skip.
 
 ## Installation
 
@@ -223,6 +227,7 @@ mcp = RouterMCP(
     name="my-app",
     allow_mutation=False,
     include=["/api/*"],
+    include_tags=["iam:*"],  # keep only routes tagged iam:… (untagged drop)
     # The caller's own Authorization header travels to the routes by default;
     # an empty list disables forwarding entirely.
     # passthrough_headers=["authorization"],
@@ -232,8 +237,9 @@ mcp.run()  # streamable HTTP, 127.0.0.1:8000 — mcp.run(host="0.0.0.0", port=90
 
 ### Progressive disclosure (large apps)
 
-Above `progressive_threshold` routes (default 25, `mode="auto"`), the toolset
-switches to a 4-layer walkthrough of the tag tree:
+Above `progressive_threshold` routes (default 25, `mode="auto"`, counted
+after path and tag filtering), the toolset switches to a 4-layer walkthrough
+of the tag tree:
 
 ```
 list_domains ──▶ list_queries("billing:invoice") ──▶ get_query_schema("billing:invoice") ──▶ graphql_query
@@ -251,6 +257,19 @@ domains combine freely. Force either mode with `mode="simple" | "progressive"`.
 ```python
 mcp.mount_to(app, "/mcp")            # streamable HTTP at /mcp/
 mcp.handler.mount_graphql(app)       # GraphiQL at /graphiql + POST /graphql
+```
+
+### Multiple MCP deployments over one app
+
+Different MCP consumers often need different slices of the same app. Build
+one `RouterMCP` per use case, each scoped by its own tag filter, and mount
+each at its own path — the instances share nothing but the wrapped app:
+
+```python
+iam = RouterMCP(app, name="iam-api", include_tags=["iam:*"])
+billing = RouterMCP(app, name="billing-api", include_tags=["billing:*"])
+iam.mount_to(app, "/mcp-iam")        # streamable HTTP at /mcp-iam/
+billing.mount_to(app, "/mcp-billing")
 ```
 
 ### Plain GraphQL (no MCP)

@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Tag-based route filtering**: `include_tags`/`exclude_tags` fnmatch globs
+  scope which routes enter the schema, mirroring `include`/`exclude` (exclude
+  wins, silent drop, AND-composed with path filters). `include_tags` is a
+  strict whitelist — untagged routes drop; Enum tags are ignored. Enables
+  several `RouterMCP` deployments over one app, each scoped to a different
+  tag set and mounted at its own path.
 - **Startup-notice showcase in `examples/shop`**: one route per notice
   reason, so booting the demo prints every warning the scanner can emit —
   six skips (form/file, raw `Response` return, required header param,

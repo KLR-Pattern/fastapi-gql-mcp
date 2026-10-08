@@ -47,6 +47,13 @@ class RouterMCP:
         app: The FastAPI application whose routes become the schema.
         name: MCP server name shown to clients.
         include/exclude: fnmatch globs over route paths (exclude wins).
+        include_tags/exclude_tags: fnmatch globs over route tags
+            (exclude_tags wins). A route matches when ANY of its string
+            tags matches ANY pattern — "iam:*" matches tags=["iam:users"].
+            Enum tags are ignored. include_tags is a strict whitelist:
+            untagged routes are dropped; with only exclude_tags set,
+            untagged routes stay. Tag filters AND with path filters (a
+            route must pass both); dropping is silent, like path filters.
         allow_mutation: Expose POST/PUT/PATCH/DELETE routes as GraphQL
             mutations. Default False (read-only).
         mutation_include: fnmatch globs limiting WHICH write routes become
@@ -93,7 +100,7 @@ class RouterMCP:
             (list_domains -> list_queries -> get_query_schema ->
             graphql_query); ``auto`` picks progressive once the schema
             carries more than ``progressive_threshold`` routes (counted
-            after include/exclude filtering).
+            after path and tag filtering).
         include_hidden: Also scan routes with ``include_in_schema=False``.
     """
 
@@ -104,6 +111,8 @@ class RouterMCP:
         name: str = "fastapi-gql-mcp API",
         include: Sequence[str] | None = None,
         exclude: Sequence[str] | None = None,
+        include_tags: Sequence[str] | None = None,
+        exclude_tags: Sequence[str] | None = None,
         allow_mutation: bool = False,
         mode: Literal["auto", "simple", "progressive"] = "auto",
         include_hidden: bool = False,
@@ -122,6 +131,8 @@ class RouterMCP:
             app,
             include=include,
             exclude=exclude,
+            include_tags=include_tags,
+            exclude_tags=exclude_tags,
             allow_mutation=allow_mutation,
             include_hidden=include_hidden,
             mutation_include=mutation_include,

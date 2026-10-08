@@ -423,3 +423,143 @@ class TestMutationWhitelist:
         mcp = RouterMCP(app, name="wl3", allow_mutation=True, mutation_include=["/none"])
         sdl = mcp.handler.get_sdl()
         assert "list_users" in sdl
+
+
+def build_multi_app() -> FastAPI:
+    """iam + billing + untagged routes: one app, several MCP scopes."""
+    app = FastAPI()
+    users = {1: UserOut(id=1, name="alice", email="a@x.io")}
+
+    @app.get("/users", response_model=list[UserOut], tags=["iam:users"])
+    async def list_users():
+        return list(users.values())
+
+    @app.post("/users", response_model=UserOut, tags=["iam:users"])
+    async def create_user(payload: UserCreate):
+        return UserOut(id=2, name=payload.name, email=payload.email)
+
+    @app.get("/invoices", response_model=UserOut, tags=["billing:invoices"])
+    async def list_invoices():
+        return UserOut(id=1, name="inv-1")
+
+    @app.get("/ping")
+    async def ping():
+        return {"pong": True}
+
+    return app
+
+
+class TestTagFiltering:
+    async def test_get_schema_scoped_to_tags(self):
+        mcp = RouterMCP(
+            build_multi_app(), name="iam-api", include_tags=["iam:*"],
+            allow_mutation=True,
+        )
+        sdl = mcp.handler.get_sdl()
+        assert "list_users" in sdl and "create_user" in sdl
+        assert "list_invoices" not in sdl
+        assert "ping" not in sdl  # untagged drops under the whitelist
+        summary = mcp.domains.summary()
+        assert [d["name"] for d in summary] == ["iam"]
+
+    async def test_query_executes_included_route(self):
+        mcp = RouterMCP(build_multi_app(), name="iam-api", include_tags=["iam:*"])
+        async with Client(mcp.mcp) as client:
+            result = payload(
+                await client.call_tool(
+                    "graphql_query",
+                    # tag "iam:users" nests: IamQuery.users.list_users
+                    {"query": "{ iam { users { list_users { id name } } } }"},
+                )
+            )
+        assert result["data"]["data"]["iam"]["users"]["list_users"] == [
+            {"id": 1, "name": "alice"}
+        ]
+
+    async def test_mutation_filtered_out_by_tags(self):
+        mcp = RouterMCP(
+            build_multi_app(), name="billing-api", include_tags=["billing*"],
+            allow_mutation=True,
+        )
+        assert "Mutation" not in mcp.handler.get_sdl()
+
+    async def test_auto_mode_counts_post_tag_filter(self):
+        big = FastAPI()
+
+        class Out(BaseModel):
+            id: int
+
+        for i in range(30):
+            tagged = i < 26
+            name = f"{'misc' if tagged else 'core'}{i}"
+            tags = ["misc"] if tagged else ["core"]
+
+            def make_handler(n: int):
+                async def handler() -> Out:
+                    return Out(id=n)
+
+                handler.__name__ = f"handler_{n}"
+                return handler
+
+            big.get(f"/{name}", response_model=Out, tags=tags)(make_handler(i))
+
+        mcp = RouterMCP(big, name="core-only", include_tags=["core"])
+        assert len(mcp.handler.routes) == 4
+        assert mcp.mode == "simple"
+
+    async def test_two_instances_same_app_different_tags(self):
+        """The motivating scenario: one app, one MCP deployment per use
+        case, each scoped by its own tag set."""
+        app = build_multi_app()
+        iam = RouterMCP(app, name="iam-api", include_tags=["iam:*"])
+        billing = RouterMCP(app, name="billing-api", include_tags=["billing*"])
+
+        async with Client(iam.mcp) as client:
+            result = payload(await client.call_tool("get_schema", {}))
+            sdl = result["data"]["sdl"]
+            assert "list_users" in sdl and "list_invoices" not in sdl
+
+        async with Client(billing.mcp) as client:
+            result = payload(await client.call_tool("get_schema", {}))
+            sdl = result["data"]["sdl"]
+            assert "list_invoices" in sdl and "list_users" not in sdl
+
+    async def test_two_mounts_on_one_app(self):
+        """Both deployments mounted into the app they wrap, each at its own
+        path; the composed lifespan (host -> sub1 -> sub2) enters each part
+        exactly once."""
+        import httpx
+        from asgi_lifespan import LifespanManager
+
+        app = build_multi_app()
+        iam = RouterMCP(app, name="iam-api", include_tags=["iam:*"])
+        billing = RouterMCP(app, name="billing-api", include_tags=["billing*"])
+        iam.mount_to(app, "/mcp-iam")
+        billing.mount_to(app, "/mcp-billing")
+        assert iam.handler.invoker.manage_lifespan is False
+        assert billing.handler.invoker.manage_lifespan is False
+
+        init = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "t", "version": "0"},
+            },
+        }
+        responses = {}
+        async with LifespanManager(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                for path in ("/mcp-iam/", "/mcp-billing/"):
+                    responses[path] = await client.post(
+                        path, json=init,
+                        headers={"Accept": "application/json, text/event-stream"},
+                    )
+        for path, response in responses.items():
+            assert response.status_code == 200, path
+            assert "text/event-stream" in response.headers["content-type"], path
