@@ -103,6 +103,9 @@ class FastAPIMCP:
             carries more than ``progressive_threshold`` routes (counted
             after path and tag filtering).
         include_hidden: Also scan routes with ``include_in_schema=False``.
+        exclude_deprecated: Drop routes declared ``deprecated=True`` — a
+            config-level silent drop, like the path/tag filters. Routes
+            that stay keep their GraphQL-native deprecation mark.
     """
 
     def __init__(
@@ -117,6 +120,7 @@ class FastAPIMCP:
         allow_mutation: bool = False,
         mode: Literal["auto", "simple", "progressive"] = "auto",
         include_hidden: bool = False,
+        exclude_deprecated: bool = False,
         progressive_threshold: int = PROGRESSIVE_THRESHOLD,
         mutation_include: Sequence[str] | None = None,
         passthrough_headers: Sequence[str] | None = None,
@@ -136,6 +140,7 @@ class FastAPIMCP:
             exclude_tags=exclude_tags,
             allow_mutation=allow_mutation,
             include_hidden=include_hidden,
+            exclude_deprecated=exclude_deprecated,
             mutation_include=mutation_include,
             passthrough_headers=passthrough_headers,
             request_timeout=request_timeout,
@@ -204,18 +209,31 @@ class FastAPIMCP:
     def mcp(self) -> Any:
         return self._mcp
 
-    def run(self, *, host: str = "127.0.0.1", port: int = 8000) -> None:
+    def run(
+        self, *, host: str = "127.0.0.1", port: int = 8000, stateless_http: bool = False
+    ) -> None:
         """Run the MCP server over streamable HTTP.
 
         HTTP is the only transport: the wrapped app is a service whose routes
         speak HTTP, and per-caller credential passthrough needs the HTTP
         request context that stdio has no notion of. Use ``mount_to`` to
         serve MCP on the app's own port instead of opening a second one.
+
+        ``stateless_http=True`` runs one transport per request (no session
+        affinity): safe behind multi-worker deployments and non-sticky load
+        balancers, at the cost of per-request session setup.
         """
-        self._mcp.run(transport="http", host=host, port=port)
+        self._mcp.run(
+            transport="http", host=host, port=port, stateless_http=stateless_http
+        )
 
     def mount_to(
-        self, app: FastAPI, path: str = "/mcp", *, auth_at_root: bool = False
+        self,
+        app: FastAPI,
+        path: str = "/mcp",
+        *,
+        auth_at_root: bool = False,
+        stateless_http: bool = False,
     ) -> None:
         """Mount the MCP server into a FastAPI app (streamable HTTP).
 
@@ -232,13 +250,19 @@ class FastAPIMCP:
         registered callback lives at the root domain (e.g. reusing an OAuth
         app whose callback is ``/auth/callback`` via a ``redirect_path``
         subdirectory).
+
+        ``stateless_http=True`` runs one transport per request (no session
+        affinity): the right mode when several workers / pods serve the
+        mount behind a non-sticky load balancer — stateful streamable HTTP
+        sessions otherwise 404 when a request lands on a worker that did
+        not create them.
         """
         if auth_at_root and getattr(self._mcp, "auth", None) is None:
             raise GQLMCPConfigError(
                 "auth_at_root requires FastAPIMCP(..., auth=...) — no auth provider set"
             )
         if auth_at_root:
-            http_app = self._mcp.http_app(path=path)
+            http_app = self._mcp.http_app(path=path, stateless_http=stateless_http)
             if app is self._handler.invoker.app:
                 self._handler.invoker.disable_lifespan_management()
             else:
@@ -282,7 +306,7 @@ class FastAPIMCP:
             )
         # http_app's internal route defaults to "/mcp"; re-root it to "/" so the
         # mount path itself is the endpoint.
-        http_app = self._mcp.http_app(path="/")
+        http_app = self._mcp.http_app(path="/", stateless_http=stateless_http)
         # Starlette does NOT run lifespans of mounted sub-apps; fastmcp's
         # streamable HTTP session manager needs one, so compose it into the
         # host app's lifespan.

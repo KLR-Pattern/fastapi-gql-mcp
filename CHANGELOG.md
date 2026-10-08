@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`stateless_http=True` on `mount_to()` / `run()`** — one transport per
+  request (no session affinity), for multi-worker / multi-pod deployments
+  behind non-sticky load balancers where stateful streamable HTTP sessions
+  404. Passed through to fastmcp's `http_app`/`run_http_async`.
+- **MCP tool annotations** — discovery tools and `graphql_query` now carry
+  `readOnlyHint`, `graphql_mutation` carries `destructiveHint`, letting
+  agents auto-run reads and confirm writes.
+- **`exclude_deprecated=True` filter** — drops `deprecated=True` routes at
+  the config level (silent drop, like path/tag filters); by default they
+  stay with their GraphQL-native `@deprecated` mark.
+
 ## 0.9.0 (2026-10-08)
 
 ### Changed

@@ -31,7 +31,7 @@ from fastapi_gql_mcp.mcp.errors import (
     create_error_response,
     create_success_response,
 )
-from fastapi_gql_mcp.mcp.tools import register_executor_tools
+from fastapi_gql_mcp.mcp.tools import _READ_ONLY, register_executor_tools
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -147,7 +147,7 @@ def register_progressive_tools(
             return None
         return path
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READ_ONLY)
     def list_domains() -> dict[str, Any]:
         """List the API's domains (derived from route tags) with operation counts.
 
@@ -171,7 +171,7 @@ def register_progressive_tools(
     # computed once and reused — agents re-explore the same domain often.
     sdl_cache: dict[tuple[str, ...], str] = {}
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READ_ONLY)
     def list_queries(domain: str) -> dict[str, Any]:
         """List the read (Query) operations of one domain.
 
@@ -203,7 +203,7 @@ def register_progressive_tools(
 
         mutation_index = handler.mutation_fields
 
-        @mcp.tool()
+        @mcp.tool(annotations=_READ_ONLY)
         def list_mutations(domain: str) -> dict[str, Any]:
             """List the write (Mutation) operations of one domain.
 
@@ -225,7 +225,7 @@ def register_progressive_tools(
             ]
             return create_success_response({"domain": domain, "mutations": fields})
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READ_ONLY)
     def get_query_schema(domain: str) -> dict[str, Any]:
         """Get the SDL fragment for one domain: its operations and reachable types.
 

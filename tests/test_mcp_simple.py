@@ -584,3 +584,52 @@ class TestReadiness:
         assert report.degraded == ()
         assert report.degraded_fields == ()
         assert not report.ready
+
+
+class TestStatelessMount:
+    async def test_stateless_tools_list_without_initialize(self):
+        """stateless_http=True: every request stands alone — tools/list works
+        without a prior initialize or session id, which is exactly what a
+        non-sticky multi-worker balancer delivers."""
+        import httpx
+        from asgi_lifespan import LifespanManager
+
+        app = build_app()
+        mcp = FastAPIMCP(app, name="stateless")
+        mcp.mount_to(app, "/mcp", stateless_http=True)
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+        }
+        async with LifespanManager(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/mcp/",
+                    json=req,
+                    headers={"Accept": "application/json, text/event-stream"},
+                )
+        assert response.status_code == 200, response.text
+        assert "graphql_query" in response.text
+
+
+class TestToolAnnotations:
+    async def test_simple_mode_hints(self, mcp):
+        async with Client(mcp.mcp) as client:
+            tools = {t.name: t for t in await client.list_tools()}
+        assert tools["get_schema"].annotations.read_only_hint is True
+        assert tools["graphql_query"].annotations.read_only_hint is True
+        assert tools["graphql_mutation"].annotations.destructive_hint is True
+
+    async def test_progressive_mode_hints(self):
+        mcp = FastAPIMCP(
+            build_app(), name="prog", mode="progressive", allow_mutation=True
+        )
+        async with Client(mcp.mcp) as client:
+            tools = {t.name: t for t in await client.list_tools()}
+        assert tools["list_domains"].annotations.read_only_hint is True
+        assert tools["graphql_mutation"].annotations.destructive_hint is True

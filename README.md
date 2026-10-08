@@ -31,7 +31,10 @@ schema** from your routes (Apollo's "GraphQL as the MCP contract" pattern), so
 agents get:
 
 - **a constant tool set** (2 in simple mode, up to 6 with progressive
-  disclosure) — never one tool per endpoint
+  disclosure) — never one tool per endpoint; discovery tools and
+  `graphql_query` carry the `readOnlyHint` MCP annotation,
+  `graphql_mutation` the `destructiveHint`, so agents can auto-run reads
+  and confirm writes
 - **field-level selection** — fetch `{ id name }`, not the whole payload
 - **composition** — combine several routes in one query; a failing route nulls
   only its own field
@@ -149,6 +152,8 @@ Rules worth knowing:
   when ANY of its string tags matches ANY pattern (`include_tags=["iam:*"]`
   keeps `tags=["iam:users"]`), `exclude_tags` wins, untagged routes drop
   under a tag whitelist, and tag filters AND with path filters.
+  `exclude_deprecated=True` drops `deprecated=True` routes the same way;
+  routes that stay carry their GraphQL-native `@deprecated` mark.
 - Route tags form a **domain tree** (`tags=["billing:invoice"]`); large apps
   switch to **progressive disclosure** (below).
 - A lone `Annotated[FilterModel, Query()]` flattens into individual query
@@ -287,6 +292,19 @@ domains combine freely. Force either mode with `mode="simple" | "progressive"`.
 mcp.mount_to(app, "/mcp")            # streamable HTTP at /mcp/
 mcp.handler.mount_graphql(app)       # GraphiQL at /graphiql + POST /graphql
 ```
+
+**Multi-worker deployments**: streamable HTTP sessions are stateful and live
+in one process — behind several workers or pods, either pin the MCP path to
+one worker / use sticky routing, or mount stateless:
+
+```python
+mcp.mount_to(app, "/mcp", stateless_http=True)  # no session affinity needed
+mcp.run(stateless_http=True)                    # same flag on run()
+```
+
+Stateless mode runs one transport per request: it survives any load
+balancer, at the cost of per-request session setup. `/graphql` (plain
+GraphQL face) is stateless already.
 
 ### Multiple MCP deployments over one app
 

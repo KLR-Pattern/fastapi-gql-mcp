@@ -683,3 +683,32 @@ class TestReadiness:
         )
         for b in report.degraded:
             assert f"{b.method} {b.path}: {b.reason}" in rendered
+
+
+class TestDeprecatedFiltering:
+    def test_exclude_deprecated_drops_silently(self):
+        app = FastAPI()
+
+        @app.get("/old", deprecated=True, response_model=ItemOut)
+        async def old():
+            return ItemOut(id=1, name="o")
+
+        @app.get("/new", response_model=ItemOut)
+        async def new():
+            return ItemOut(id=2, name="n")
+
+        routes, skips = scan(app, exclude_deprecated=True)
+        assert {r.path for r in routes} == {"/new"}
+        assert not any(s.path == "/old" for s in skips)  # config drop, not a skip
+
+    def test_deprecated_kept_with_mark_by_default(self):
+        app = FastAPI()
+
+        @app.get("/old", deprecated=True, response_model=ItemOut)
+        async def old():
+            return ItemOut(id=1, name="o")
+
+        from fastapi_gql_mcp import RouterGraphQLHandler
+
+        sdl = RouterGraphQLHandler(app).get_sdl()
+        assert "old: ItemOut @deprecated" in sdl

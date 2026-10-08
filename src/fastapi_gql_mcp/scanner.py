@@ -331,6 +331,7 @@ class RouterScanner:
         exclude_tags: Sequence[str] | None = None,
         allow_mutation: bool = False,
         include_hidden: bool = False,
+        exclude_deprecated: bool = False,
         mutation_include: Sequence[str] | None = None,
     ) -> None:
         self._app = app
@@ -340,6 +341,7 @@ class RouterScanner:
         self._exclude_tags = exclude_tags
         self._allow_mutation = allow_mutation
         self._include_hidden = include_hidden
+        self._exclude_deprecated = exclude_deprecated
         self._mutation_include = mutation_include
 
     def scan(
@@ -379,6 +381,11 @@ class RouterScanner:
             if self._include_tags is not None and not _tags_match(
                 route_tags, self._include_tags
             ):
+                continue
+
+            # Deprecated filtering, same config-level silent drop. Routes that
+            # stay carry a GraphQL-native deprecation mark in the schema.
+            if self._exclude_deprecated and getattr(r, "deprecated", False):
                 continue
 
             if method in _MUTATION_VERBS and not self._allow_mutation:

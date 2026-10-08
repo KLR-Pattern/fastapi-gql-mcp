@@ -50,6 +50,7 @@ class RouterGraphQLHandler:
         exclude_tags: Sequence[str] | None = None,
         allow_mutation: bool = False,
         include_hidden: bool = False,
+        exclude_deprecated: bool = False,
         mutation_include: Sequence[str] | None = None,
         passthrough_headers: Sequence[str] | None = None,
         request_timeout: float | None = 30.0,
@@ -100,6 +101,7 @@ class RouterGraphQLHandler:
             exclude_tags=exclude_tags,
             allow_mutation=allow_mutation,
             include_hidden=include_hidden,
+            exclude_deprecated=exclude_deprecated,
             mutation_include=mutation_include,
         ).scan(self._types)
         self._builder = SchemaBuilder(routes, self._invoker, self._types)
