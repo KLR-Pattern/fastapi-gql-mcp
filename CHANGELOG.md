@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Readiness checklist as data**: `readiness()` returns the exposure audit
+  the startup notices are built from — skipped routes (`SkipRecord`), raw-JSON
+  degrades (`DegradedRecord`) — both carrying the route's string tags so each
+  finding names its domain — and degraded union fields, plus a `ready` flag
+  for CI pinning. Two entry points share one classifier:
+  `RouterScanner(app, ...).readiness()` runs standalone (scan + classify
+  only, no schema build or MCP server), `handler.readiness()` assembles from
+  the stored scan results with no re-scan. Pass the same filters your
+  deployment uses.
 - **Tag-based route filtering**: `include_tags`/`exclude_tags` fnmatch globs
   scope which routes enter the schema, mirroring `include`/`exclude` (exclude
   wins, silent drop, AND-composed with path filters). `include_tags` is a

@@ -7,7 +7,13 @@ from fastapi_gql_mcp.handler import GQLMCPConfigError, RouterGraphQLHandler
 from fastapi_gql_mcp.invoker import RouteInvoker, filter_passthrough_headers
 from fastapi_gql_mcp.mcp.errors import GQLMCPErrors
 from fastapi_gql_mcp.mcp.server import RouterMCP
-from fastapi_gql_mcp.scanner import RouteInfo, RouterScanner
+from fastapi_gql_mcp.scanner import (
+    DegradedRecord,
+    ReadinessReport,
+    RouteInfo,
+    RouterScanner,
+    SkipRecord,
+)
 
 # Derived from installed metadata (pyproject is the single source of truth).
 # A hardcoded copy here already drifted once (0.4.0 while shipping 0.5.0);
@@ -18,6 +24,8 @@ except PackageNotFoundError:  # pragma: no cover - source tree without install
     __version__ = "0.0.0.dev0"
 
 __all__ = [
+    "DegradedRecord",
+    "ReadinessReport",
     "RouteInfo",
     "RouteInvoker",
     "RouterGraphQLHandler",
@@ -25,6 +33,7 @@ __all__ = [
     "GQLMCPConfigError",
     "GQLMCPErrors",
     "RouterScanner",
+    "SkipRecord",
     "filter_passthrough_headers",
     "__version__",
 ]

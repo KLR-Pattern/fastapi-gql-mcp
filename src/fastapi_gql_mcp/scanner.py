@@ -111,6 +111,75 @@ class SkipRecord:
     path: str
     method: str
     reason: str
+    tags: tuple[str, ...] = ()  # the route's string tags (which domain it belongs to)
+
+
+@dataclass(frozen=True)
+class DegradedRecord:
+    """A route that DID enter the schema but degraded to raw JSON (no field
+    selection), and why. Still callable — just not structurally exposed."""
+
+    path: str
+    method: str
+    field_name: str  # the GraphQL field carrying the raw JSON
+    reason: str
+    tags: tuple[str, ...] = ()  # the route's string tags (which domain it belongs to)
+
+
+@dataclass(frozen=True)
+class ReadinessReport:
+    """The exposure audit the startup notices are built from: which routes
+    the bridge skips, which it degrades to raw JSON, and which model fields
+    degrade. Assemble from any scan via ``from_scan`` — the single source
+    shared by ``RouterScanner.readiness()`` (standalone, no handler) and
+    ``RouterGraphQLHandler.readiness()`` (over stored results, no re-scan)."""
+
+    skips: tuple[SkipRecord, ...]  # never entered the schema
+    degraded: tuple[DegradedRecord, ...]  # in the schema, no field selection
+    degraded_fields: tuple[tuple[str, str], ...]  # (Model.field, "A|B")
+
+    @property
+    def ready(self) -> bool:
+        """True when nothing is skipped or degraded — assert this
+        in CI to pin the exposure you expect."""
+        return not (self.skips or self.degraded or self.degraded_fields)
+
+    @classmethod
+    def from_scan(
+        cls,
+        routes: Sequence[RouteInfo],
+        skips: Sequence[SkipRecord],
+        types: TypeBuilder,
+    ) -> ReadinessReport:
+        return cls(
+            skips=tuple(skips),
+            degraded=tuple(
+                DegradedRecord(r.path, r.method, r.field_name, reason, tags=r.tags)
+                for r in routes
+                if (reason := _degraded_reason(r)) is not None
+            ),
+            degraded_fields=tuple(types.union_fields),
+        )
+
+
+def _degraded_reason(route: RouteInfo) -> str | None:
+    """Why one scanned route degrades to raw JSON (loses field selection),
+    or None when its response stays structured. Shared by the startup
+    notice and ReadinessReport so the two can never drift apart."""
+    if route.response_annotation is Any:
+        return (
+            "no typed response — bridged as raw JSON; add a return "
+            "annotation or response_model for a structured type"
+        )
+    if route.response_filter:
+        return f"response filtered via {route.response_filter}"
+    if (members := union_members(route.response_annotation)) is not None:
+        names = "|".join(getattr(m, "__name__", str(m)) for m in members)
+        return (
+            f"union response ({names}) — restructure into one model "
+            "per shape to regain field selection"
+        )
+    return None
 
 
 def _param_required(field_info: FieldInfo) -> bool:
@@ -314,7 +383,8 @@ class RouterScanner:
             if method in _MUTATION_VERBS and not self._allow_mutation:
                 skips.append(
                     SkipRecord(r.path, method, "mutation endpoints are disabled "
-                              "(pass allow_mutation=True to expose them)")
+                              "(pass allow_mutation=True to expose them)",
+                              tags=route_tags)
                 )
                 continue
 
@@ -328,6 +398,7 @@ class RouterScanner:
                         r.path, method,
                         "mutation endpoint not matched by mutation_include globs "
                         "(widen the pattern, or pass mutation_include=None to allow all)",
+                        tags=route_tags,
                     )
                 )
                 continue
@@ -337,6 +408,7 @@ class RouterScanner:
                     SkipRecord(
                 r.path, method,
                 "hidden route (include_in_schema=False; pass include_hidden=True to expose it)",
+                tags=route_tags,
             )
                 )
                 continue
@@ -352,30 +424,16 @@ class RouterScanner:
         # Degraded-but-present routes deserve a startup notice too: the field
         # is callable but has NO field selection. Naming the cause (and the
         # way out) turns a silent downgrade into an actionable one.
-        degraded = []
-        for r in routes:
-            if r.response_annotation is Any:
-                degraded.append(
-                    f"{r.method} {r.path}: no typed response — bridged as raw "
-                    "JSON; add a return annotation or response_model for a "
-                    "structured type"
-                )
-            elif r.response_filter:
-                degraded.append(
-                    f"{r.method} {r.path}: response filtered via {r.response_filter}"
-                )
-            elif (members := union_members(r.response_annotation)) is not None:
-                names = "|".join(getattr(m, "__name__", str(m)) for m in members)
-                degraded.append(
-                    f"{r.method} {r.path}: union response ({names}) — restructure "
-                    "into one model per shape to regain field selection"
-                )
+        degraded = [
+            (r, reason) for r in routes if (reason := _degraded_reason(r)) is not None
+        ]
         if degraded:
+            rendered = "; ".join(f"{r.method} {r.path}: {reason}" for r, reason in degraded)
             logger.warning(
                 "fastapi-gql-mcp bridged %d route(s) as raw JSON (no field "
                 "selection): %s",
                 len(degraded),
-                "; ".join(degraded),
+                rendered,
             )
         if types.union_fields:
             rendered = "; ".join(f"{path} ({names})" for path, names in types.union_fields)
@@ -387,6 +445,15 @@ class RouterScanner:
             )
         return routes, skips
 
+    def readiness(self) -> ReadinessReport:
+        """Scan and classify without building anything else — the same audit
+        the startup notices come from, runnable on its own (CI gate, pre-
+        deploy checklist). Pass the same filters your deployment uses so
+        the report reflects what IT would expose."""
+        types = TypeBuilder()
+        routes, skips = self.scan(types)
+        return ReadinessReport.from_scan(routes, skips, types)
+
     # ----------------------------------------------------------------- helpers
 
     def _build_route_info(
@@ -396,8 +463,12 @@ class RouterScanner:
         types: TypeBuilder,
         skips: list[SkipRecord],
     ) -> RouteInfo | None:
+        # OpenAPI allows Enum tags; only string tags participate (domain
+        # grouping below applies the same rule).
+        str_tags = tuple(t for t in route.tags or () if isinstance(t, str))
+
         def skip(reason: str) -> None:
-            skips.append(SkipRecord(route.path, method, reason))
+            skips.append(SkipRecord(route.path, method, reason, tags=str_tags))
 
         flat = _flatten_params(route.dependant)
         path_p, query_p, header_p, cookie_p, body_p = flat
@@ -506,8 +577,6 @@ class RouterScanner:
             body_params = [replace(p, embed=True) for p in body_params]
 
         description = route.summary or route.description or None
-        # OpenAPI typing allows Enum tags; only string tags form domains.
-        str_tags = tuple(t for t in route.tags or () if isinstance(t, str))
         # OpenAPI's `deprecated: true` becomes GraphQL-native deprecation.
         deprecated = bool(getattr(route, "deprecated", False))
         return RouteInfo(

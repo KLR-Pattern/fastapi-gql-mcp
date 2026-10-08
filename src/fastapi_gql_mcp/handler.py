@@ -26,7 +26,12 @@ from opentelemetry import trace
 
 from fastapi_gql_mcp.depth_guard import parse_guarded
 from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
-from fastapi_gql_mcp.scanner import RouteInfo, RouterScanner, SkipRecord
+from fastapi_gql_mcp.scanner import (
+    ReadinessReport,
+    RouteInfo,
+    RouterScanner,
+    SkipRecord,
+)
 from fastapi_gql_mcp.schema_builder import GQLMCPConfigError, SchemaBuilder
 from fastapi_gql_mcp.type_builder import TypeBuilder
 
@@ -115,6 +120,13 @@ class RouterGraphQLHandler:
         report, so callers can assert nothing disappeared unexpectedly
         (e.g. a new endpoint silently failing to map in CI)."""
         return list(self._skips)
+
+    def readiness(self) -> ReadinessReport:
+        """The full exposure audit over THIS handler's scan results (no
+        re-scan, no re-build): skipped routes, raw-JSON bridges, degraded
+        model fields. ``RouterScanner(app).readiness()`` runs the same
+        audit standalone, without constructing a handler."""
+        return ReadinessReport.from_scan(self._routes, self._skips, self._types)
 
     @property
     def invoker(self) -> RouteInvoker:

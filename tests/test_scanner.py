@@ -556,3 +556,130 @@ class TestIncludeRouter:
         assert not skips
         assert {r.path for r in routes} == {"/outer/inner", "/outer/own"}
         assert {r.field_name for r in routes} == {"inner_route", "outer_route"}
+
+
+class CatOut(BaseModel):
+    id: int
+
+
+class DogOut(BaseModel):
+    id: int
+
+
+class SearchOut(BaseModel):
+    hit: CatOut | DogOut  # union field inside a model: only this field degrades
+
+
+def build_degraded_app() -> FastAPI:
+    """One route per exposure outcome: clean, bridged (3 causes), and a
+    model whose union field degrades without affecting its route."""
+    app = FastAPI()
+
+    @app.get("/clean", response_model=CatOut, tags=["shop:catalog"])
+    async def clean():
+        return CatOut(id=1)
+
+    @app.get("/untyped", tags=["iam:misc"])
+    async def untyped():
+        return {"ok": True}
+
+    @app.get("/filtered", response_model=list[CatOut],
+             response_model_exclude_unset=True, tags=["iam:billing"])
+    async def filtered():
+        return [CatOut(id=2)]
+
+    @app.get("/union", response_model=CatOut | DogOut, tags=["analytics"])
+    async def union_route():
+        return CatOut(id=3)
+
+    @app.get("/search", response_model=SearchOut, tags=["shop:search"])
+    async def search():
+        return SearchOut(hit=CatOut(id=4))
+
+    return app
+
+
+class TestReadiness:
+    def test_clean_app_ready(self):
+        app = FastAPI()
+
+        @app.get("/fine", response_model=ItemOut)
+        async def fine():
+            return ItemOut(id=1, name="a")
+
+        report = RouterScanner(app).readiness()
+        assert report.ready
+        assert report.skips == () and report.degraded == ()
+        assert report.degraded_fields == ()
+
+    def test_bridged_reasons_name_the_cause(self):
+        report = RouterScanner(build_degraded_app()).readiness()
+        by_path = {b.path: b for b in report.degraded}
+        assert set(by_path) == {"/untyped", "/filtered", "/union"}
+        assert "no typed response" in by_path["/untyped"].reason
+        assert "response_model_exclude_unset" in by_path["/filtered"].reason
+        assert "union response (CatOut|DogOut)" in by_path["/union"].reason
+        assert by_path["/untyped"].field_name == "untyped"
+
+    def test_degraded_fields_carry_model_and_field(self):
+        report = RouterScanner(build_degraded_app()).readiness()
+        assert report.degraded_fields == (("SearchOut.hit", "CatOut, DogOut"),)
+
+    def test_skips_section_lists_exclusions(self):
+        report = RouterScanner(build_app()).readiness()
+        paths = {s.path for s in report.skips}
+        assert {"/raw", "/stream", "/needs-header", "/hidden"} <= paths
+        assert not report.ready
+
+    def test_records_carry_tags(self):
+        """Skip/bridge records name the domain a route belongs to, so a
+        multi-deployment review can route each finding to its owner."""
+        report = RouterScanner(build_degraded_app(), allow_mutation=False).readiness()
+        by_path = {b.path: b for b in report.degraded}
+        assert by_path["/untyped"].tags == ("iam:misc",)
+        assert by_path["/filtered"].tags == ("iam:billing",)
+
+        report = RouterScanner(build_tagged_app()).readiness()
+        rec = next(s for s in report.skips if s.path == "/users")  # POST
+        assert rec.tags == ("iam:users",)
+
+        # Enum tags stay ignored; untagged routes report no tags.
+        by_path = {b.path: b.tags for b in RouterScanner(build_tagged_app()).readiness().degraded}
+        assert by_path["/untagged"] == ()
+
+        routes_scoped = RouterScanner(
+            build_tagged_app(), include_tags=["iam:billing"]
+        ).readiness()
+        assert routes_scoped.ready
+
+    def test_readiness_respects_filters(self):
+        report = RouterScanner(build_degraded_app(), include=["/clean"]).readiness()
+        assert report.ready
+        # Tag filtering runs before mutation gating: POST /users (iam) drops
+        # silently, and /untagged (a raw-JSON bridge) is out of the whitelist.
+        report = RouterScanner(
+            build_tagged_app(), include_tags=["iam:billing"]
+        ).readiness()
+        assert report.ready
+
+    def test_handler_readiness_matches_scanner(self):
+        from fastapi_gql_mcp import RouterGraphQLHandler
+
+        app = build_app()
+        handler = RouterGraphQLHandler(app, allow_mutation=True)
+        assert handler.readiness() == RouterScanner(app, allow_mutation=True).readiness()
+
+    def test_startup_notice_texts_match_report_reasons(self, caplog):
+        """The notice and the report share one classifier: every report
+        reason appears verbatim in the startup warning."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="fastapi_gql_mcp.scanner"):
+            report = RouterScanner(build_degraded_app()).readiness()
+        rendered = next(
+            r.getMessage()
+            for r in caplog.records
+            if "bridged" in r.getMessage() and "route(s)" in r.getMessage()
+        )
+        for b in report.degraded:
+            assert f"{b.method} {b.path}: {b.reason}" in rendered

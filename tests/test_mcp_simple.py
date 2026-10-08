@@ -563,3 +563,16 @@ class TestTagFiltering:
         for path, response in responses.items():
             assert response.status_code == 200, path
             assert "text/event-stream" in response.headers["content-type"], path
+
+
+class TestReadiness:
+    async def test_report_scoped_to_the_deployment(self):
+        """The checklist reflects what THIS deployment would expose: /ping
+        (a raw-JSON bridge) is tag-filtered out and never reported."""
+        mcp = RouterMCP(build_multi_app(), name="iam-api", include_tags=["iam:*"])
+        report = mcp.handler.readiness()
+        assert [s.path for s in report.skips] == ["/users"]  # POST, mutation off
+        assert report.skips[0].tags == ("iam:users",)
+        assert report.degraded == ()
+        assert report.degraded_fields == ()
+        assert not report.ready

@@ -139,7 +139,8 @@ Rules worth knowing:
   degrade the same way, each with a field note and a startup notice naming
   the fix — see [Capability boundaries](#capability-boundaries). Only routes
   that cannot be called correctly at all are skipped, with a logged reason;
-  `handler.skips` lists them programmatically for CI assertions.
+  `handler.skips` lists them programmatically, and `readiness()` returns the
+  full skip + degradation audit for CI assertions.
 - `include`/`exclude` fnmatch globs scope which routes enter the schema.
   `include_tags`/`exclude_tags` do the same over route tags: a route matches
   when ANY of its string tags matches ANY pattern (`include_tags=["iam:*"]`
@@ -189,7 +190,8 @@ Deletes and other side-effect calls annotated `-> None` (204-style) become
 ### Skipped — only when the route cannot be called correctly
 
 Skips are logged at startup with the reason and the fix; `handler.skips`
-exposes them (`path`, `method`, `reason`) for CI assertions.
+exposes them (`path`, `method`, `reason`) for CI assertions, and
+`readiness()` (below) wraps them into the fuller exposure audit.
 
 | Condition | Why / what to do |
 |---|---|
@@ -203,6 +205,30 @@ exposes them (`path`, `method`, `reason`) for CI assertions.
 
 `include`/`exclude` globs — and `include_tags`/`exclude_tags` — also remove
 routes by configuration; that is filtering you asked for, not a skip.
+
+### Readiness checklist
+
+The same audit the startup notices come from is callable as data — which
+routes the bridge would skip, which it would degrade to raw JSON, and which
+model fields would degrade. One classifier backs both, so the report and
+the warnings can never drift apart.
+
+```python
+# standalone: scan + classify only — no schema build, no MCP server
+from fastapi_gql_mcp import RouterScanner
+
+report = RouterScanner(app, include_tags=["iam:*"]).readiness()
+report.ready            # False when anything is skipped or degraded
+report.skips            # tuple[SkipRecord(path, method, reason, tags), ...]
+report.degraded         # tuple[DegradedRecord(path, method, field_name, reason, tags), ...]
+report.degraded_fields  # tuple[(Model.field, "A | B"), ...]
+
+# or over an already-built deployment (stored scan results, no re-scan)
+mcp.handler.readiness()
+```
+
+Pass the same filters your deployment uses, and `assert report.ready` in CI
+to pin the exposure you expect.
 
 ## Installation
 
