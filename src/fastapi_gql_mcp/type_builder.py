@@ -39,6 +39,7 @@ from typing import (
     Literal,
     TypeVar,
     Union,
+    cast,
     get_args,
     get_origin,
     get_type_hints,
@@ -76,6 +77,13 @@ _LITERAL_SCALARS: dict[type, GraphQLScalarType] = {
     int: GraphQLInt,
     bool: GraphQLBoolean,
 }
+
+# What ``input_type`` actually returns before any NonNull wrapping — narrow
+# enough for GraphQLNonNull's argument (``GraphQLInputType`` includes NonNull,
+# which mypy rightly refuses to re-wrap).
+_BareInput = (
+    GraphQLScalarType | GraphQLEnumType | GraphQLInputObjectType | GraphQLList[Any]
+)
 
 
 class UnsupportedFieldTypeError(TypeError):
@@ -568,12 +576,14 @@ class TypeBuilder:
 
     def _degradable_input_type(
         self, annotation: Any, context: str
-    ) -> tuple[GraphQLInputType, str | None]:
+    ) -> tuple[_BareInput, str | None]:
         """Input twin of ``_degradable_output_type``: an unmappable field
         degrades to a JSON argument; FastAPI validates whatever the caller
         sends (a 422 surfaces as a field error, never silently)."""
         try:
-            return self.input_type(annotation, context=context), None
+            return cast(
+                _BareInput, self.input_type(annotation, context=context)
+            ), None
         except UnsupportedFieldTypeError as exc:
             return GraphQLJSON, _field_unmappable_reason(exc)
 
@@ -756,11 +766,13 @@ class TypeBuilder:
             self._built_output_fields[td] = cached
         return cached
 
-    def _td_output_fields(self, td: type) -> dict[str, GraphQLField]:
+    def _td_output_fields(self, td: Any) -> dict[str, GraphQLField]:
         """TypedDict output fields: annotations from ``get_type_hints`` (no
         FieldInfo to consult), nullability from the required/optional keys —
         an optional key may be ABSENT from the JSON, so its field is
-        nullable even when its annotation is not Optional."""
+        nullable even when its annotation is not Optional. ``td`` is Any:
+        the is_typeddict() guard at the dispatch site is the type proof
+        (plain ``type`` carries no __required_keys__ for mypy)."""
         required = td.__required_keys__
         fields: dict[str, GraphQLField] = {}
         for field_name, annotation in _typeddict_hints(td).items():
@@ -785,7 +797,7 @@ class TypeBuilder:
             self._built_input_fields[td] = cached
         return cached
 
-    def _td_input_fields(self, td: type) -> dict[str, GraphQLInputField]:
+    def _td_input_fields(self, td: Any) -> dict[str, GraphQLInputField]:
         """Required-key fields are NonNull arguments (no FastAPI ``required``
         flag exists for TypedDicts — the key set IS the requiredness)."""
         required = td.__required_keys__
