@@ -224,7 +224,7 @@ class TestObjects:
 
     def test_unsupported_type_raises(self):
         with pytest.raises(UnsupportedFieldTypeError):
-            TypeBuilder().output_type(set[int])  # no scalar for sets
+            TypeBuilder().output_type(bytes)  # no GraphQL scalar for bytes
 
     def test_dict_maps_to_json_scalar(self):
         from fastapi_gql_mcp.scalars import GraphQLJSON
@@ -237,7 +237,7 @@ class TestObjects:
     def test_unsupported_nested_field_reports_path(self):
         class Bad(BaseModel):
             ok: int
-            payload: set[int]  # no scalar for sets
+            payload: bytes  # no GraphQL scalar for bytes
 
         with pytest.raises(UnsupportedFieldTypeError, match=r"Bad\.payload"):
             TypeBuilder().output_type(Bad)

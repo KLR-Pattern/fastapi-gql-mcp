@@ -42,6 +42,57 @@
   the config level (silent drop, like path/tag filters); by default they
   stay with their GraphQL-native `@deprecated` mark.
 
+### Fixed
+
+- **A failed model build no longer poisons the shared type cache** (issue
+  #3, case 1). Object/input registration is now transactional: when a
+  field fails to map, the half-built type (and its name) rolls back out of
+  the caches. Previously the first route was skipped but the incomplete
+  type stayed cached, so a second route reusing the same model passed
+  scanning and the `GraphQLSchema` build then crashed for the WHOLE app
+  (`TypeError: ... fields cannot be resolved`) — one incompatible model
+  took every valid route down with it. Nested failures roll back every
+  recursion frame, and each reuse of a bad model now gets its own skip
+  record.
+- **`set`/`frozenset` map onto GraphQL lists** (issue #3, case 3).
+  Pydantic serializes sets to JSON arrays, so `set[T]` fields, parameters
+  and responses bridge as `[T!]!` exactly like `list[T]` — previously the
+  route was skipped with "Cannot map typing.Set".
+- **Enum members inside `Literal` map to their underlying scalar** (issue
+  #3, case 2). `Literal[Mode.A]` now normalizes `Mode.A` to `Mode.A.value`
+  and rides the existing Literal path (`String`/`Int` + the
+  "Allowed values" description); mixed members like
+  `Literal[Mode.A, "other"]` work, and route-level Literal responses now
+  carry the allowed-values note in their field description, matching model
+  fields. Previously such routes were skipped with "Literal of Mode has no
+  GraphQL scalar".
+- **`TypedDict` maps onto real object/input types** (issue #3, case 6).
+  A `TypedDict` response (or a TypedDict field nested inside a Pydantic
+  model) becomes a `GraphQLObjectType` / `GraphQLInputObjectType` like a
+  `BaseModel`: field types from `get_type_hints`, nullability from the
+  required/optional key sets (`total=False` keys bridge as nullable — they
+  may be absent from the JSON), recursive TypedDicts resolve through the
+  same register-before-fields cycle handling, and failed builds roll back
+  transactionally. Detection uses `typing_extensions.is_typeddict`, which
+  recognizes classes declared via BOTH `typing.TypedDict` and
+  `typing_extensions.TypedDict` (`typing.is_typeddict` misses the latter —
+  verified on 3.14); `typing-extensions>=4.6` is now a declared dependency.
+  Previously TypedDict responses were skipped with "Cannot map
+  <class FlatRecord>".
+- **Input unions bridge as the JSON scalar** (issue #3, case 4) — the input
+  side now has the same fallback the output side always had. `A | B`
+  parameters (query or body) map onto a `JSON` argument instead of skipping
+  the route; the agent sends either member's value and FastAPI validates it
+  — a mismatch surfaces as a GraphQL field error (422), never silently.
+  This intentionally REVERSES the documented 0.9.0 behavior where
+  request-side unions were skipped with "Cannot map"; symmetric degradation
+  beats unavailability.
+- **Unbound-TypeVar diagnostics** (issue #3, case 5). An unparameterized
+  generic (`response_model=Envelope` where `value: T`) still skips only its
+  own route, but the reason now names the fix —
+  "GenericEnvelope.value: unbound TypeVar ~T — parameterize the generic so
+  the field has a concrete type" — instead of a bare "Cannot map ~T".
+
 ## 0.9.0 (2026-10-08)
 
 ### Changed

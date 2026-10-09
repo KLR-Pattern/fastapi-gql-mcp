@@ -339,9 +339,9 @@ class TestTypeTrials:
         app = FastAPI()
 
         @app.get("/weird")
-        async def weird() -> set[int]:
+        async def weird() -> bytes:
             # Pydantic accepts it, the bridge has no scalar for it
-            return set()
+            return b""
 
         routes, skips = RouterScanner(app).scan()
         assert not routes
