@@ -62,6 +62,21 @@
 
 ### Fixed
 
+- **Nested recursive chains unroll too.** Stamping a chain end makes
+  graphql-core's `visit` rebuild every ancestor of the edited node, so the
+  id-keyed chain-end table silently missed an outer chain end nested
+  inside another chain's template — two recursive types in one document
+  truncated invisibly (the very thing unrolling exists to prevent).
+  Detection and stamping now share one bottom-up pass: chain-end-ness is
+  decided from each node itself (its type context and its own
+  selections), so no marking state has to survive the node rebuilds.
+- **A template alias reserving the back-edge's response key no longer
+  fails validation.** `children: name` inside the stopping selection
+  collided with the stamped subtree (`children { ... }`) on the same
+  response key, rejecting a legal query with ~100 `FieldsConflict`
+  errors. Such chains now degrade to the written document — the agent's
+  own key choice wins — the same honest fallback as fragment-carrying
+  templates.
 - **A failed model build no longer poisons the shared type cache** (issue
   #3, case 1). Object/input registration is now transactional: when a
   field fails to map, the half-built type (and its name) rolls back out of

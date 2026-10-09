@@ -112,73 +112,72 @@ def expand_recursive_chains(
     template repeated under the back-edge. Chains whose template carries
     fragments are left untouched — GraphQL forbids self-referencing
     fragments, so nobody expresses recursion that way, and degrading to the
-    unexpanded document is the honest fallback."""
+    unexpanded document is the honest fallback. The same fallback applies
+    when a template selection already reserves the back-edge's response key
+    (``children: name``): the stamp would collide with it at validation,
+    and the agent's own key choice wins.
+
+    Detection and stamping share one bottom-up pass: chain-end-ness is
+    decidable from the node itself (its type context and its own
+    selections), so no marking state has to survive the pass. That matters
+    because stamping an inner chain end makes ``visit`` rebuild its
+    ancestors — an identity-keyed marking table would silently miss an
+    outer chain end nested above an inner one."""
     if not edges or depth <= 0:
         return document
 
-    class ChainMarker(Visitor):
+    class Expander(Visitor):
         def __init__(self, type_info: TypeInfo) -> None:
             Visitor.__init__(self)
             self.type_info = type_info
-            self.chain_ends: dict[int, str] = {}
 
         def enter(self, node: Any, *_args: Any) -> None:
             self.type_info.enter(node)
-            if not isinstance(node, FieldNode):
-                return
-            parent = self.type_info.get_parent_type()
-            field_def = self.type_info.get_field_def()
-            if parent is None or field_def is None:
-                return
-            if (parent.name, node.name.value) not in edges:
-                return
-            own = _unwrap(field_def.type).name
-            selections = (
-                node.selection_set.selections if node.selection_set else ()
-            )
-            if any(
-                isinstance(s, FieldNode) and (own, s.name.value) in edges
-                for s in selections
-            ):
-                return  # a deeper edge selection exists: not the chain end
-            if any(not isinstance(s, FieldNode) for s in selections):
-                return  # fragments inside the template: skip this chain
-            self.chain_ends[id(node)] = node.name.value
-
-        def leave(self, node: Any, *_args: Any) -> None:
-            self.type_info.leave(node)
-
-    class Expander(Visitor):
-        def __init__(self, chain_ends: dict[int, str], levels: int) -> None:
-            Visitor.__init__(self)
-            self.chain_ends = chain_ends
-            self.levels = levels
 
         def leave(self, node: Any, *_args: Any) -> Any:
-            if not (isinstance(node, FieldNode) and id(node) in self.chain_ends):
-                return None
-            template = node.selection_set
-            assert template is not None  # chain ends always carry one
-            current = template
-            for _ in range(self.levels):
-                inner = FieldNode(
-                    name=NameNode(value=node.name.value), selection_set=current
+            try:
+                if not isinstance(node, FieldNode):
+                    return None
+                parent = self.type_info.get_parent_type()
+                field_def = self.type_info.get_field_def()
+                if parent is None or field_def is None:
+                    return None
+                if (parent.name, node.name.value) not in edges:
+                    return None
+                own = _unwrap(field_def.type).name
+                selections = (
+                    node.selection_set.selections if node.selection_set else ()
                 )
-                # AST child collections must be tuples, not lists.
-                current = SelectionSetNode(
-                    selections=(*template.selections, inner)
+                if any(
+                    isinstance(s, FieldNode) and (own, s.name.value) in edges
+                    for s in selections
+                ):
+                    return None  # a deeper edge selection exists: not the chain end
+                if any(not isinstance(s, FieldNode) for s in selections):
+                    return None  # fragments inside the template: skip this chain
+                if node.name.value in {(s.alias or s.name).value for s in selections}:
+                    return None  # response key taken by an alias: stamp would collide
+                template = node.selection_set
+                assert template is not None  # chain ends always carry one
+                current = template
+                for _ in range(depth):
+                    inner = FieldNode(
+                        name=NameNode(value=node.name.value), selection_set=current
+                    )
+                    # AST child collections must be tuples, not lists.
+                    current = SelectionSetNode(
+                        selections=(*template.selections, inner)
+                    )
+                return FieldNode(
+                    alias=node.alias,
+                    name=node.name,
+                    arguments=node.arguments,
+                    directives=node.directives,
+                    selection_set=current,
                 )
-            return FieldNode(
-                alias=node.alias,
-                name=node.name,
-                arguments=node.arguments,
-                directives=node.directives,
-                selection_set=current,
-            )
+            finally:
+                self.type_info.leave(node)
 
-    marker = ChainMarker(TypeInfo(schema))
-    marked = visit(document, marker)  # no edits: same tree, ids stay valid
-    assert marked is document
-    expanded = visit(document, Expander(marker.chain_ends, depth))
+    expanded = visit(document, Expander(TypeInfo(schema)))
     assert isinstance(expanded, DocumentNode)
     return expanded

@@ -153,6 +153,54 @@ class TestTrueDepth:
         assert deepest(result["data"]["t"]["a"]) == 3
         assert deepest(result["data"]["t"]["b"]) == 5
 
+    async def test_nested_chains_both_unroll(self):
+        """A chain end nested inside another chain's template unrolls too.
+        Stamping the inner chain makes visit() rebuild the outer chain-end
+        node, so detection must not depend on node identity surviving the
+        pass — it is decided from each node itself, bottom-up."""
+
+        class B(BaseModel):
+            tag: str
+            xs: list["B"] = []
+
+        B.model_rebuild()
+
+        class NestedA(BaseModel):
+            name: str
+            children: list["NestedA"] = []
+            b: "B | None" = None
+
+        NestedA.model_rebuild()
+
+        def bchain(d: int, tag: str) -> B:
+            if d == 1:
+                return B(tag=tag)
+            return B(tag=tag, xs=[bchain(d - 1, f"{tag}.{d}")])
+
+        app = FastAPI()
+
+        @app.get("/nested", response_model=NestedA, tags=["t"])
+        async def nested() -> NestedA:
+            leaf = NestedA(name="leaf", b=bchain(3, "bx"))
+            mid = NestedA(name="mid", children=[leaf])
+            return NestedA(name="root", children=[mid])
+
+        handler = RouterGraphQLHandler(app)
+        result = await handler.execute(
+            "{ t { nested { children { name b { tag xs { tag } } } } } }"
+        )
+        assert "errors" not in result, result
+        # the outer chain reaches its leaf instead of stopping at mid
+        leaf_node = result["data"]["t"]["nested"]["children"][0]["children"][0]
+        assert leaf_node["name"] == "leaf"
+        assert leaf_node["children"] == []
+        # the inner chain hanging off that leaf is complete too
+        b = leaf_node["b"]
+        assert b["tag"] == "bx"
+        assert b["xs"][0]["tag"] == "bx.3"
+        assert b["xs"][0]["xs"][0]["tag"] == "bx.3.2"
+        assert b["xs"][0]["xs"][0]["xs"] == []
+
 
 class TestBoundaries:
     async def test_max_depth_still_guards_the_written_document(self):
@@ -190,6 +238,65 @@ class TestBoundaries:
         # unexpanded: the selected depth is what comes back
         node = result["data"]["t"]["tree"]["children"][0]
         assert set(node.keys()) == {"name"}
+
+    async def test_aliased_response_key_skips_chain(self):
+        """``children: name`` reserves the response key the stamp would use.
+        Both cannot coexist in one selection set, so the chain degrades to
+        the written document — the agent's own key choice wins."""
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["t"])
+        async def tree():
+            return chain(4, "root")
+
+        handler = RouterGraphQLHandler(app)
+        result = await handler.execute(
+            "{ t { tree { children { name children: name } } } }"
+        )
+        assert "errors" not in result, result
+        # unexpanded: the alias holds the scalar, not a stamped subtree
+        node = result["data"]["t"]["tree"]["children"][0]
+        assert node["name"] == "root.4"
+        assert node["children"] == "root.4"
+
+    async def test_alias_skip_keeps_normal_unrolling(self):
+        """The response-key check must not over-skip: without the colliding
+        alias the same schema still unrolls to true depth."""
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["t"])
+        async def tree():
+            return chain(6, "root")
+
+        handler = RouterGraphQLHandler(app)
+        result = await handler.execute(
+            "{ t { tree { name children { name } } } }"
+        )
+        assert "errors" not in result, result
+        assert deepest(result["data"]["t"]["tree"]) == 6
+
+    async def test_outer_alias_still_unrolls(self):
+        """Aliasing the back-edge itself (``kids: children``) does not
+        collide with the stamp's response key — unrolling proceeds; only
+        the first level answers under the alias, stamped levels under the
+        edge's own name."""
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["t"])
+        async def tree():
+            return chain(5, "root")
+
+        handler = RouterGraphQLHandler(app)
+        result = await handler.execute(
+            "{ t { tree { kids: children { name } } } }"
+        )
+        assert "errors" not in result, result
+
+        def stamped_depth(node: dict, key: str) -> int:
+            kids = node.get(key) or []
+            return 1 + (stamped_depth(kids[0], "children") if kids else 0)
+
+        assert stamped_depth(result["data"]["t"]["tree"], "kids") == 5
 
     async def test_mutual_recursion_untouched(self):
         """A.b: B / B.a: A is a cycle without a direct self-edge — not
