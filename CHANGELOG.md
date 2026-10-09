@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Stdlib `@dataclass` maps onto real object/input types.** A dataclass
+  response (or a dataclass field nested inside a model, and vice versa)
+  becomes a `GraphQLObjectType` / `GraphQLInputObjectType` like a
+  `BaseModel` or `TypedDict`: annotations from `get_type_hints`, output
+  nullability from the annotation (defaults always materialize), input
+  requiredness and literal defaults from the field definitions
+  (`default_factory` fields are optional without a GraphQL default —
+  FastAPI materializes them, a 422 surfaces as a field error).
+  `ClassVar`/`InitVar` never become fields. FastAPI treats dataclasses as
+  first-class citizens on both sides, so validation and serialization ride
+  the native stack — the runtime path needed no changes. Recursive
+  dataclasses get the true-depth contract like any recursive type.
+
 ## 0.10.0 (2026-10-09)
 
 ### Changed

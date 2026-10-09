@@ -191,9 +191,10 @@ Every route lands in one of four buckets.
 ### Structured — the default
 
 A typed `response_model` (or return annotation) over Pydantic models becomes
-a selectable GraphQL type: `{ id name }`, nested models, `TypedDict`s, lists
-and sets, enums, `Literal`s (enum members normalize to their values), custom
-scalars (`UUID`, `Decimal`, datetime…), generics (`Page[Item]`), aliases.
+a selectable GraphQL type: `{ id name }`, nested models, `TypedDict`s, stdlib
+`@dataclass`es, lists and sets, enums, `Literal`s (enum members normalize to
+their values), custom scalars (`UUID`, `Decimal`, datetime…), generics
+(`Page[Item]`), aliases.
 
 ### Raw JSON fallback — still callable, just not field-selectable
 
