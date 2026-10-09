@@ -44,18 +44,50 @@ class TestTrueDepth:
         assert deepest(result["data"]["t"]["tree"]) == 6
 
     async def test_field_filtering_repeats_per_level(self):
+        """The template is the STOPPING level's selection, applied to every
+        descendant. A rich model (extra fields the query never selects below
+        the top) makes a filtering regression observable: if unrolling lost
+        the template, description/price/sku would leak into descendants."""
+
+        class RichNode(BaseModel):
+            name: str
+            description: str = "must not leak into descendants"
+            price_cents: int = 999
+            sku: str = "SKU-X"
+            children: list["RichNode"] = []
+
+        RichNode.model_rebuild()
+
+        def rich_chain(depth: int, name: str) -> RichNode:
+            if depth == 1:
+                return RichNode(name=name)
+            return RichNode(
+                name=name, children=[rich_chain(depth - 1, f"{name}.{depth}")]
+            )
+
         app = FastAPI()
 
-        @app.get("/tree", response_model=Node, tags=["t"])
-        async def tree():
-            return chain(6, "root")
+        @app.get("/rich", response_model=RichNode, tags=["t"])
+        async def rich() -> RichNode:
+            return rich_chain(5, "root")
 
         handler = RouterGraphQLHandler(app)
-        result = await handler.execute("{ t { tree { name children { name } } } }")
-        node = result["data"]["t"]["tree"]
-        for _ in range(6):
-            assert set(node.keys()) == {"name", "children"}  # no extra fields
-            node = node["children"][0] if node["children"] else node
+        # top level selects {name, description}; the STOPPING level (inside
+        # children) selects only {name}: descendants must carry exactly that.
+        result = await handler.execute(
+            "{ t { rich { name description children { name } } } }"
+        )
+        assert "errors" not in result, result
+        root = result["data"]["t"]["rich"]
+        assert set(root.keys()) == {"name", "description", "children"}
+
+        def walk_descendants(node: dict) -> None:
+            for child in node["children"]:
+                assert set(child.keys()) == {"name", "children"}, sorted(child.keys())
+                walk_descendants(child)
+
+        walk_descendants(root)
+        assert deepest(root) == 5  # filtering AND full depth together
 
     async def test_manual_deeper_selection_still_complete(self):
         """Hand-writing more levels than needed is legal GraphQL; the chain
