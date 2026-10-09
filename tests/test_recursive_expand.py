@@ -6,7 +6,10 @@ the selection shape where the agent stops repeats to whatever depth the
 data has, at any position in the document.
 """
 
+from typing import Any
+
 from fastapi import FastAPI
+from graphql import GraphQLError, ValidationRule
 from pydantic import BaseModel
 
 from fastapi_gql_mcp.handler import RouterGraphQLHandler
@@ -323,6 +326,64 @@ class TestBoundaries:
         assert "errors" not in result, result
         assert result["data"]["t"]["pair"]["b"] == {"tag": "y"}
 
+    async def test_subselectionless_edge_rejected_cleanly(self):
+        """A recursive field selected without a subselection is invalid
+        GraphQL: the standard validation error comes back (exactly like
+        any other field), never a crash on the missing template."""
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["t"])
+        async def tree():
+            return chain(3, "root")
+
+        handler = RouterGraphQLHandler(app)
+        result = await handler.execute("{ t { tree { name children } } }")
+        assert "data" not in result, result
+        messages = [e["message"] for e in result["errors"]]
+        assert any(
+            "must have a selection of subfields" in m for m in messages
+        ), messages
+
+    async def test_custom_rules_see_the_written_document(self):
+        """Caller-supplied validation rules judge the document the agent
+        WROTE — unrolling is a system behavior that would inflate any
+        field/complexity count and misfire cost guards on reasonable
+        recursive selections."""
+
+        class MaxFields(ValidationRule):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                self.count = 0
+
+            def enter_field(self, node, *a):
+                self.count += 1
+                if self.count > 50:
+                    self.report_error(
+                        GraphQLError("cost guard: more than 50 fields")
+                    )
+
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["t"])
+        async def tree():
+            return chain(3, "root")
+
+        handler = RouterGraphQLHandler(app, validation_rules=[MaxFields])
+        result = await handler.execute(
+            "{ t { tree { name children { name } } } }"
+        )
+        assert "errors" not in result, result
+        assert deepest(result["data"]["t"]["tree"]) == 3
+
+        # the guard still fires on a genuinely fat WRITTEN document
+        fat = RouterGraphQLHandler(
+            app, validation_rules=[MaxFields], max_depth=None
+        )
+        wide = "{ t { tree { name " + "children { name " * 30 + "}" * 33
+        result = await fat.execute(wide)
+        messages = [e["message"] for e in result.get("errors", [])]
+        assert any("cost guard" in m for m in messages), messages
+
 
 class TestSchemaNote:
     async def test_contract_note_once_per_type_not_per_field(self):
@@ -355,14 +416,15 @@ class TestUnrollLimit:
 
         monkeypatch.setattr("sys.setrecursionlimit", lambda n: None)
         monkeypatch.setattr("sys.getrecursionlimit", lambda: 1000)
-        assert unroll_limit() == 100  # default budget → floor of 100
+        assert unroll_limit() == 62  # honest: the deepest walk (~limit + 1
+        # levels) stays under the measured 82-level ceiling at 1000 frames
 
         monkeypatch.setattr("sys.getrecursionlimit", lambda: 20000)
-        assert unroll_limit() == 2000  # raised budget scales up with it
+        assert unroll_limit() == 1250  # raised budget scales up with it
 
     async def test_floor_hit_reports_error_not_silent(self, monkeypatch):
         """Data deeper than the scaffold must never vanish silently: the
-        errors channel carries a notice while the data stays."""
+        errors channel carries a definite error while the data stays."""
         TREE = {"name": "n", "children": [
             {"name": "n", "children": [
                 {"name": "n", "children": [
@@ -389,8 +451,8 @@ class TestUnrollLimit:
         result = await handler.execute("{ t { tree { name children { name } } } }")
         assert result["data"]["t"]["tree"] is not None  # data stays
         messages = [e["message"] for e in result.get("errors", [])]
-        assert any("unroll limit (3 levels)" in m for m in messages), messages
-        assert any("may have been truncated" in m for m in messages)
+        assert any("exceeded the unroll limit (3 levels)" in m for m in messages), messages
+        assert any("response is incomplete" in m for m in messages)
 
     async def test_no_floor_error_below_limit(self, monkeypatch):
         monkeypatch.setattr("fastapi_gql_mcp.handler.unroll_limit", lambda: 10)
@@ -437,3 +499,241 @@ class TestUnrollLimit:
             assert deepest(result["data"]["t"]["tree"]) == 200
         finally:
             sys.setrecursionlimit(old)
+
+    async def test_data_at_exact_limit_is_complete(self, monkeypatch):
+        """The probe level separates complete from truncated. Stamping
+        ``limit`` times projects one probe level beyond it, so data up to
+        ``limit + 1`` levels serves COMPLETE and silent; deeper data
+        occupies the probe and errors definitely. Complete data is never
+        flagged."""
+        monkeypatch.setattr("fastapi_gql_mcp.handler.unroll_limit", lambda: 5)
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["t"])
+        async def tree():
+            raise RuntimeError("invoker patched")
+
+        handler = RouterGraphQLHandler(app)
+        box: dict[str, Any] = {}
+
+        async def fake_invoke(*a, **k):
+            return box["tree"]
+
+        handler._invoker.invoke = fake_invoke
+
+        box["tree"] = chain(6, "root")  # probe level exactly reached
+        result = await handler.execute("{ t { tree { name children { name } } } }")
+        assert "errors" not in result, result
+        assert deepest(result["data"]["t"]["tree"]) == 6
+
+        box["tree"] = chain(7, "root")  # one past the probe: truncated
+        result = await handler.execute("{ t { tree { name children { name } } } }")
+        messages = [e["message"] for e in result.get("errors", [])]
+        assert any("exceeded the unroll limit (5 levels)" in m for m in messages), messages
+        assert result["data"]["t"]["tree"] is not None  # partial data stays
+
+    async def test_single_object_edge_excess_is_loud(self, monkeypatch):
+        """Single-object recursive edges (next: LNode | None) count as edge
+        links in the excess walk: a truncated chain-link list errors, a
+        complete one stays silent."""
+
+        class LNode(BaseModel):
+            name: str
+            next: "LNode | None" = None
+
+        LNode.model_rebuild()
+
+        def lchain(d: int, name: str) -> LNode:
+            node = LNode(name=f"{name}.{d}")
+            for i in range(d - 1, 0, -1):
+                node = LNode(name=f"{name}.{i}", next=node)
+            return node
+
+        monkeypatch.setattr("fastapi_gql_mcp.handler.unroll_limit", lambda: 3)
+        app = FastAPI()
+
+        @app.get("/ll", response_model=LNode, tags=["t"])
+        async def ll():
+            raise RuntimeError("invoker patched")
+
+        handler = RouterGraphQLHandler(app)
+        box: dict[str, Any] = {}
+
+        async def fake_invoke(*a, **k):
+            return box["node"]
+
+        handler._invoker.invoke = fake_invoke
+
+        box["node"] = lchain(10, "n")  # 10 links against a limit of 3
+        result = await handler.execute("{ t { ll { name next { name } } } }")
+        messages = [e["message"] for e in result.get("errors", [])]
+        assert any("exceeded the unroll limit (3 levels)" in m for m in messages), messages
+
+        box["node"] = lchain(3, "n")  # exactly at the limit: complete
+        result = await handler.execute("{ t { ll { name next { name } } } }")
+        assert "errors" not in result, result
+
+    async def test_unstamped_document_never_flagged(self):
+        """Only a stamped document can truncate at the limit: a query that
+        touches no recursive field skips the excess walk entirely, so a
+        JSON passthrough payload whose keys merely collide with edge names
+        never attracts an error."""
+
+        class Audit(BaseModel):
+            payload: dict[str, Any]
+
+        def nested(key: str, depth: int) -> dict[str, Any]:
+            node: dict[str, Any] = {}
+            for _ in range(depth):
+                node = {key: node}
+            return node
+
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["t"])
+        async def tree():
+            return chain(2, "root")
+
+        @app.get("/audit", response_model=Audit, tags=["t"])
+        async def audit():
+            return Audit(payload=nested("children", 150))
+
+        handler = RouterGraphQLHandler(app)
+        result = await handler.execute("{ t { audit { payload } } }")
+        assert "errors" not in result, result
+
+    async def test_mixed_document_payload_never_flagged(self):
+        """The excess walk is gated by the document: in a query selecting
+        BOTH a (shallow) recursive tree and a JSON passthrough payload whose
+        keys collide with edge names, the payload's nesting is invisible to
+        the document and cannot flag the response."""
+
+        class Audit(BaseModel):
+            payload: dict[str, Any]
+
+        def nested(key: str, depth: int) -> dict[str, Any]:
+            node: dict[str, Any] = {}
+            for _ in range(depth):
+                node = {key: node}
+            return node
+
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["t"])
+        async def tree():
+            return chain(3, "root")
+
+        @app.get("/audit", response_model=Audit, tags=["t"])
+        async def audit():
+            return Audit(payload=nested("children", 150))
+
+        handler = RouterGraphQLHandler(app)
+        result = await handler.execute(
+            "{ t { tree { name children { name } } audit { payload } } }"
+        )
+        assert "errors" not in result, result
+        assert deepest(result["data"]["t"]["tree"]) == 3
+
+    async def test_limit_pinned_per_instance(self):
+        """The limit is read once at construction: raising the process
+        budget later serves deeper trees only on NEW handlers — an old one
+        keeps its baked-in documents and ERRORS on data beyond its pinned
+        limit instead of truncating silently."""
+        import sys
+
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["t"])
+        async def tree():
+            raise RuntimeError("invoker patched")
+
+        handler = RouterGraphQLHandler(app)  # pins the default-budget limit
+        pinned = handler._unroll_limit
+        box: dict[str, Any] = {}
+
+        async def fake_invoke(*a, **k):
+            return box["tree"]
+
+        handler._invoker.invoke = fake_invoke
+
+        def wide(depth: int) -> dict[str, Any]:
+            node: dict[str, Any] = {"name": "leaf", "children": []}
+            for _ in range(depth - 1):
+                node = {"name": "n", "children": [node]}
+            return node
+
+        box["tree"] = chain(3, "root")
+        warm = await handler.execute("{ t { tree { name children { name } } } }")
+        assert "errors" not in warm, warm  # compiled + cached at pinned limit
+
+        old = sys.getrecursionlimit()
+        sys.setrecursionlimit(10000)
+        try:
+            # same query string → cache hit; deep data now exceeds the PINNED
+            # limit → definite error, never a silent shallow serve
+            box["tree"] = wide(pinned + 50)
+            result = await handler.execute(
+                "{ t { tree { name children { name } } } }"
+            )
+            messages = [e["message"] for e in result.get("errors", [])]
+            assert any(
+                f"exceeded the unroll limit ({pinned} levels)" in m
+                for m in messages
+            ), messages
+            assert result["data"]["t"]["tree"] is not None  # data stays
+
+            # a NEW handler picks up the raised budget and serves it in full
+            handler2 = RouterGraphQLHandler(app)
+            handler2._invoker.invoke = fake_invoke
+            full = await handler2.execute(
+                "{ t { tree { name children { name } } } }"
+            )
+            assert "errors" not in full, full
+            assert deepest(full["data"]["t"]["tree"]) == pinned + 50
+        finally:
+            sys.setrecursionlimit(old)
+
+    async def test_deep_data_errors_cleanly_at_default_budget(self):
+        """The honest limit in action: data deeper than the limit —
+        including depths between the old floor (100) and the real ceiling
+        (~82 inverted: depths the old code died on) — serves partial data
+        with a definite error instead of blowing the stack."""
+        from fastapi_gql_mcp.recursive_expand import unroll_limit
+
+        limit = unroll_limit()
+        box: dict[str, Any] = {}
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["t"])
+        async def tree():
+            raise RuntimeError("invoker patched")
+
+        handler = RouterGraphQLHandler(app)
+
+        async def fake_invoke(*a, **k):
+            return box["tree"]
+
+        handler._invoker.invoke = fake_invoke
+
+        def wide(depth: int) -> dict[str, Any]:
+            node: dict[str, Any] = {"name": "leaf", "children": []}
+            for _ in range(depth - 1):
+                node = {"name": "n", "children": [node]}
+            return node
+
+        # data exactly at the limit: complete, silent
+        box["tree"] = wide(limit)
+        result = await handler.execute("{ t { tree { name children { name } } } }")
+        assert "errors" not in result, result
+        assert deepest(result["data"]["t"]["tree"]) == limit
+
+        # data 20 beyond the limit (the old crash band): partial data +
+        # definite error, no stack blowup
+        box["tree"] = wide(limit + 20)
+        result = await handler.execute("{ t { tree { name children { name } } } }")
+        assert result["data"]["t"]["tree"] is not None
+        messages = [e["message"] for e in result.get("errors", [])]
+        assert any(
+            f"exceeded the unroll limit ({limit} levels)" in m for m in messages
+        ), messages
+        assert not any("maximum recursion" in m for m in messages), messages

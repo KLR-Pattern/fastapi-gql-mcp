@@ -65,6 +65,7 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 from typing_extensions import is_typeddict
 
+from fastapi_gql_mcp.recursive_expand import is_direct_self_reference
 from fastapi_gql_mcp.scalars import SCALAR_MAP, GraphQLJSON, json_passthrough
 
 logger = logging.getLogger(__name__)
@@ -89,9 +90,15 @@ _BareInput = (
 class UnsupportedFieldTypeError(TypeError):
     """Raised when an annotation cannot be represented in GraphQL."""
 
-    def __init__(self, annotation: Any, context: str) -> None:
+    def __init__(
+        self, annotation: Any, context: str, *, field_reason: str | None = None
+    ) -> None:
         self.annotation = annotation
         self.context = context
+        # Ready-made degraded-field reason, set when the context is itself
+        # the guidance (unbound TypeVar, empty model) — consumers read the
+        # attribute instead of sniffing the message text.
+        self.field_reason = field_reason
         super().__init__(
             f"Cannot map {annotation!r} to a GraphQL type ({context}). "
             f"Supported: scalars (int/str/bool/float/datetime/date/time/UUID/Decimal), "
@@ -105,10 +112,12 @@ def _unsupported(annotation: Any, context: str) -> UnsupportedFieldTypeError:
     ``Cannot map ~T`` alone does not say WHICH generic needs parameterizing
     (the context carries the model.field) or what to do about it."""
     if isinstance(annotation, TypeVar):
-        return UnsupportedFieldTypeError(
-            annotation,
+        guidance = (
             f"{context}: unbound TypeVar {annotation!r} — parameterize the "
-            f"generic so the field has a concrete type",
+            f"generic so the field has a concrete type"
+        )
+        return UnsupportedFieldTypeError(
+            annotation, guidance, field_reason=guidance
         )
     return UnsupportedFieldTypeError(annotation, context)
 
@@ -118,12 +127,12 @@ def _short_name(annotation: Any) -> str:
 
 
 def _field_unmappable_reason(exc: UnsupportedFieldTypeError) -> str:
-    """Reason recorded for a degraded field. Whole-object failures and
-    unbound-TypeVar guidance already read as sentences in their context;
-    leaf failures get the annotation's name — the fix advice lives in the
-    field note and the startup warning."""
-    if "no usable" in exc.context or "unbound TypeVar" in exc.context:
-        return exc.context
+    """Reason recorded for a degraded field: the raiser's ready-made
+    guidance when it left one (unbound TypeVar, empty model), else the
+    annotation's name — the fix advice lives in the field note and the
+    startup warning."""
+    if exc.field_reason is not None:
+        return exc.field_reason
     return f"{_short_name(exc.annotation)} has no GraphQL mapping"
 
 
@@ -132,6 +141,23 @@ def _degraded_field_note(reason: str) -> str:
         f"Raw JSON: {reason} — select bare; give the field a "
         "JSON-compatible annotation to regain field selection."
     )
+
+
+def _union_json_bridge(annotation: Any) -> tuple[str, str] | None:
+    """(reason, note) when ``annotation`` is a non-Optional union: GraphQL
+    has no union inputs and cannot promise one output member, so the field
+    bridges as raw JSON. Centralized so every field builder (model
+    output/input, TypedDict output/input) records the degradation
+    identically — the readiness report must never depend on which side a
+    union field happens to sit on."""
+    if union_members(annotation) is None:
+        return None
+    names = ", ".join(union_member_names(annotation))
+    note = (
+        f"Raw JSON whose shape is one of: {names} (union field — "
+        "select bare; GraphQL cannot promise one member)."
+    )
+    return names, note
 
 
 def _note(description: str | None, note: str) -> str:
@@ -331,13 +357,6 @@ def _materialize_str_args(annotation: Any) -> Any:
         return annotation
 
 
-def _unwrap_output_type(field_type: Any) -> Any:
-    """Strip NonNull/List wrappers — mirrors recursive_expand's edge test."""
-    while isinstance(field_type, (GraphQLNonNull, GraphQLList)):
-        field_type = field_type.of_type
-    return field_type
-
-
 def _model_namespace(model: type[BaseModel]) -> dict[str, Any]:
     """The namespace a model's ForwardRefs evaluate against: the model's own
     name (self-references — the enclosing scope binds the class name only
@@ -494,28 +513,43 @@ class TypeBuilder:
         raise _unsupported(annotation, context)
 
     def _object_type(self, model: type[BaseModel], context: str) -> GraphQLObjectType:
-        return self._registered_output_object(model, self._output_fields_cached)
+        return self._registered_output_object(
+            model, self._built_output_fields, self._output_fields
+        )
 
     def _typeddict_output_type(self, td: type, context: str) -> GraphQLObjectType:
-        return self._registered_output_object(td, self._td_output_fields_cached)
+        return self._registered_output_object(
+            td, self._built_output_fields, self._td_output_fields
+        )
 
     def _registered_output_object(
         self,
         cls: type,
-        fields_cached: Callable[[type], dict[str, GraphQLField]],
+        fields_cache: dict[type, dict[str, GraphQLField]],
+        build_fields: Callable[[type], dict[str, GraphQLField]],
     ) -> GraphQLObjectType:
         """Register-then-build shell shared by BaseModel and TypedDict
-        outputs (field error contexts come from the field builders)."""
+        outputs (field error contexts come from the field builders). The
+        field-build memo lives HERE — one cache strategy, not one wrapper
+        method per builder."""
         cached = self._object_types.get(cls)
         if cached is not None:
             return cached
         name = self._register_name(
             cls, sanitize_graphql_name(graphql_model_name(cls), what="type name")
         )
+
+        def fields_now() -> dict[str, GraphQLField]:
+            built = fields_cache.get(cls)
+            if built is None:
+                built = build_fields(cls)
+                fields_cache[cls] = built
+            return built
+
         obj = GraphQLObjectType(
             name=name,
             description=_own_doc(cls),
-            fields=lambda: fields_cached(cls),
+            fields=fields_now,
         )
         # Register BEFORE building fields so recursive types resolve the cycle
         # to this same object, then build eagerly so unsupported nested types
@@ -526,15 +560,16 @@ class TypeBuilder:
         # build, and detonates the WHOLE schema at GraphQLSchema time.
         self._object_types[cls] = obj
         try:
-            fields = fields_cached(cls)
+            fields = fields_now()
         except Exception:
             del self._object_types[cls]
             self._release_name(name, cls)
             raise
-        # Direct self-reference edge (same predicate recursive_expand applies
-        # to the finished schema)? Then the type-level description carries the
-        # true-depth contract ONCE — not one copy per recursive field.
-        if any(_unwrap_output_type(f.type) is obj for f in fields.values()):
+        # Direct self-reference edge (the same predicate recursive_edges
+        # applies to the finished schema)? Then the type-level description
+        # carries the true-depth contract ONCE — not one copy per recursive
+        # field.
+        if any(is_direct_self_reference(f.type, obj) for f in fields.values()):
             # One line, token-priced: local placement beats full contract
             # text (the README carries the details) — N recursive types
             # cost N x ~15 tokens instead of N paragraphs.
@@ -546,13 +581,6 @@ class TypeBuilder:
                 f"{obj.description}\n\n{note}" if obj.description else note
             )
         return obj
-
-    def _output_fields_cached(self, model: type[BaseModel]) -> dict[str, GraphQLField]:
-        cached = self._built_output_fields.get(model)
-        if cached is None:
-            cached = self._output_fields(model)
-            self._built_output_fields[model] = cached
-        return cached
 
     def _degradable_output_type(
         self, annotation: Any, context: str, *, bare: bool = False
@@ -611,19 +639,16 @@ class TypeBuilder:
             if degraded is not None:
                 description = _note(description, _degraded_field_note(degraded))
                 self._record_degraded(f"{model.__name__}.{field_name}", degraded)
-            elif union_members(annotation) is not None:
-                names = ", ".join(union_member_names(annotation))
-                note = (
-                    f"Raw JSON whose shape is one of: {names} (union field — "
-                    "select bare; GraphQL cannot promise one member)."
-                )
+            elif (bridge := _union_json_bridge(annotation)) is not None:
+                reason, note = bridge
                 description = _note(description, note)
                 # Surfaced by the scanner's startup log: the model's owner can
                 # regain field selection by restructuring the union away.
-                self._record_degraded(f"{model.__name__}.{field_name}", names)
+                self._record_degraded(f"{model.__name__}.{field_name}", reason)
             fields[gname] = GraphQLField(gtype, description=description)
         if not fields:
-            raise UnsupportedFieldTypeError(model, f"{model.__name__} has no usable fields")
+            reason = f"{model.__name__} has no usable fields"
+            raise UnsupportedFieldTypeError(model, reason, field_reason=reason)
         return fields
 
     # ----------------------------------------------------------------- input
@@ -676,22 +701,36 @@ class TypeBuilder:
     def _input_object_type(
         self, model: type[BaseModel], context: str
     ) -> GraphQLInputObjectType:
-        return self._registered_input_object(model, self._input_fields_cached)
+        return self._registered_input_object(
+            model, self._built_input_fields, self._input_fields
+        )
 
     def _typeddict_input_type(
         self, td: type, context: str
     ) -> GraphQLInputObjectType:
-        return self._registered_input_object(td, self._td_input_fields_cached)
+        return self._registered_input_object(
+            td, self._built_input_fields, self._td_input_fields
+        )
 
     def _registered_input_object(
         self,
         cls: type,
-        fields_cached: Callable[[type], dict[str, GraphQLInputField]],
+        fields_cache: dict[type, dict[str, GraphQLInputField]],
+        build_fields: Callable[[type], dict[str, GraphQLInputField]],
     ) -> GraphQLInputObjectType:
         """Register-then-build shell shared by BaseModel and TypedDict
         inputs; register first so recursive types resolve the cycle to this
         object, build eagerly to surface errors during scanning, roll the
-        registration back on failure (transactional, like the output side)."""
+        registration back on failure (transactional, like the output side).
+        The field-build memo lives here, as on the output side."""
+
+        def fields_now() -> dict[str, GraphQLInputField]:
+            built = fields_cache.get(cls)
+            if built is None:
+                built = build_fields(cls)
+                fields_cache[cls] = built
+            return built
+
         cached = self._input_types.get(cls)
         if cached is not None:
             return cached
@@ -700,24 +739,17 @@ class TypeBuilder:
         obj = GraphQLInputObjectType(
             name=name,
             description=_own_doc(cls),
-            fields=lambda: fields_cached(cls),
+            fields=fields_now,
         )
         self._input_types[cls] = obj
         try:
-            fields_cached(cls)
+            fields_now()
         except Exception:
             # Transactional: no half-built inputs survive.
             del self._input_types[cls]
             self._release_name(name, cls)
             raise
         return obj
-
-    def _input_fields_cached(self, model: type[BaseModel]) -> dict[str, GraphQLInputField]:
-        cached = self._built_input_fields.get(model)
-        if cached is None:
-            cached = self._input_fields(model)
-            self._built_input_fields[model] = cached
-        return cached
 
     def _input_fields(self, model: type[BaseModel]) -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
@@ -741,13 +773,18 @@ class TypeBuilder:
             if degraded is not None:
                 description = _note(description, _degraded_field_note(degraded))
                 self._record_degraded(f"{model.__name__}.{field_name}", degraded)
+            elif (bridge := _union_json_bridge(annotation)) is not None:
+                reason, note = bridge
+                description = _note(description, note)
+                self._record_degraded(f"{model.__name__}.{field_name}", reason)
             fields[gname] = GraphQLInputField(
                 gtype,
                 description=description,
                 default_value=self._input_default(info),
             )
         if not fields:
-            raise UnsupportedFieldTypeError(model, f"{model.__name__} has no usable input fields")
+            reason = f"{model.__name__} has no usable input fields"
+            raise UnsupportedFieldTypeError(model, reason, field_reason=reason)
         return fields
 
     @staticmethod
@@ -758,13 +795,6 @@ class TypeBuilder:
         return Undefined
 
     # -------------------------------------------------------------- typeddict
-
-    def _td_output_fields_cached(self, td: type) -> dict[str, GraphQLField]:
-        cached = self._built_output_fields.get(td)
-        if cached is None:
-            cached = self._td_output_fields(td)
-            self._built_output_fields[td] = cached
-        return cached
 
     def _td_output_fields(self, td: Any) -> dict[str, GraphQLField]:
         """TypedDict output fields: annotations from ``get_type_hints`` (no
@@ -785,17 +815,15 @@ class TypeBuilder:
             if degraded is not None:
                 description = _note(description, _degraded_field_note(degraded))
                 self._record_degraded(f"{td.__name__}.{field_name}", degraded)
+            elif (bridge := _union_json_bridge(annotation)) is not None:
+                reason, note = bridge
+                description = _note(description, note)
+                self._record_degraded(f"{td.__name__}.{field_name}", reason)
             fields[gname] = GraphQLField(gtype, description=description)
         if not fields:
-            raise UnsupportedFieldTypeError(td, f"{td.__name__} has no usable fields")
+            reason = f"{td.__name__} has no usable fields"
+            raise UnsupportedFieldTypeError(td, reason, field_reason=reason)
         return fields
-
-    def _td_input_fields_cached(self, td: type) -> dict[str, GraphQLInputField]:
-        cached = self._built_input_fields.get(td)
-        if cached is None:
-            cached = self._td_input_fields(td)
-            self._built_input_fields[td] = cached
-        return cached
 
     def _td_input_fields(self, td: Any) -> dict[str, GraphQLInputField]:
         """Required-key fields are NonNull arguments (no FastAPI ``required``
@@ -816,11 +844,14 @@ class TypeBuilder:
             if degraded is not None:
                 description = _note(description, _degraded_field_note(degraded))
                 self._record_degraded(f"{td.__name__}.{field_name}", degraded)
+            elif (bridge := _union_json_bridge(annotation)) is not None:
+                reason, note = bridge
+                description = _note(description, note)
+                self._record_degraded(f"{td.__name__}.{field_name}", reason)
             fields[gname] = GraphQLInputField(gtype, description=description)
         if not fields:
-            raise UnsupportedFieldTypeError(
-                td, f"{td.__name__} has no usable input fields"
-            )
+            reason = f"{td.__name__} has no usable input fields"
+            raise UnsupportedFieldTypeError(td, reason, field_reason=reason)
         return fields
 
     # ------------------------------------------------------------------ enum

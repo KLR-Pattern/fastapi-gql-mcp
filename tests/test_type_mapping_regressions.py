@@ -519,6 +519,80 @@ class TestTier3InputUnionFallback:
         await handler.aclose()
 
 
+class TestUnionDegradationSymmetry:
+    """A union FIELD degrades to raw JSON identically on every side —
+    model output/input, TypedDict output/input — with a degraded_fields
+    record and a schema note. The readiness report must never depend on
+    which side of the API the field happens to sit on."""
+
+    async def test_input_model_field_union_recorded(self):
+        class UA(BaseModel):
+            a: int = 1
+
+        class UB(BaseModel):
+            b: int = 2
+
+        class OutM(BaseModel):
+            payload: "UA | UB" = UA()
+
+        class InM(BaseModel):
+            payload: "UA | UB" = UA()
+
+        OutM.model_rebuild()
+        InM.model_rebuild()
+
+        app = FastAPI()
+
+        @app.get("/out", response_model=OutM, tags=["g"])
+        async def out():
+            return OutM()
+
+        @app.post("/echo", tags=["g"])
+        async def echo(item: InM) -> OutM:
+            return OutM()
+
+        handler = RouterGraphQLHandler(app, allow_mutation=True)
+        assert handler.readiness().degraded_fields == (
+            ("OutM.payload", "UA, UB"),
+            ("InM.payload", "UA, UB"),
+        )
+        sdl = handler.get_sdl()
+        # both sides carry the union note in their field descriptions
+        assert sdl.count("shape is one of: UA, UB") == 2, sdl
+
+    async def test_typeddict_field_unions_recorded(self):
+        class TDA(TypedDict):
+            a: int
+
+        class TDB(TypedDict):
+            b: int
+
+        class OutTd(TypedDict):
+            payload: TDA | TDB  # unquoted: local scopes cannot resolve
+            # string annotations, and TypedDicts have no model_rebuild
+
+        class InTd(TypedDict):
+            payload: TDA | TDB
+
+        app = FastAPI()
+
+        @app.get("/out", response_model=OutTd, tags=["g"])
+        async def out():
+            return {"payload": {"a": 1}}
+
+        @app.post("/echo", tags=["g"])
+        async def echo(item: InTd) -> OutTd:
+            return {"payload": {"b": 2}}
+
+        handler = RouterGraphQLHandler(app, allow_mutation=True)
+        assert handler.readiness().degraded_fields == (
+            ("OutTd.payload", "TDA, TDB"),
+            ("InTd.payload", "TDA, TDB"),
+        )
+        sdl = handler.get_sdl()
+        assert sdl.count("shape is one of: TDA, TDB") == 2, sdl
+
+
 class TestTier3UnboundTypeVar:
     """P2 (issue #5): an unparameterized generic degrades only its own
     field, with a diagnostic the author can act on — the model, the

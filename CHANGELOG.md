@@ -4,6 +4,16 @@
 
 ### Changed
 
+- **Four deduplications around the recursion machinery.** The NonNull/List
+  unwrap and the direct-self-reference predicate each have ONE definition
+  (`recursive_expand.unwrap` / `is_direct_self_reference`) shared by
+  type_builder's schema note and `recursive_edges`, so the two detectors
+  cannot drift; `UnsupportedFieldTypeError` carries a structured
+  `field_reason` attribute that degraded-field reporting reads instead of
+  sniffing exception message text; the field-build memo lives once inside
+  the register-then-build shells instead of four per-builder cache
+  wrappers.
+
 - **Unmappable model fields degrade to raw JSON instead of skipping the
   route** (issue #3, General Fix Strategy #2). A field whose type has no
   GraphQL mapping (`metadata: SomeCustomClass`) bridges as the `JSON`
@@ -34,16 +44,16 @@
   limitation. `max_depth` still guards the document as written; fragments
   in a recursive template and mutual recursion (A.b: B / B.a: A) are
   consciously left unexpanded. The unroll ceiling is a function of the
-  process recursion budget (`max(100, sys.getrecursionlimit() // 10)`) —
-  it scales automatically when an operator raises the limit to serve
-  deeper trees; if a response's recursive nesting still reaches the floor,
-  a notice is appended to the GraphQL `errors` channel (data stays —
-  truncation is never silent). The recursive type's schema description
-  carries a one-line contract ("full subtree at true depth; your
-  selection repeats per level") once per type — local placement at
-  ~15 tokens instead of per-field paragraphs. The recursive field's schema description
-  states the contract ("complete subtree at true depth; your selection is
-  the repeating template"), so agents discover it from the SDL.
+  process recursion budget (`sys.getrecursionlimit() // 16`, from a
+  measured ~12 frames per served level) — the limit never promises depth
+  the executor cannot deliver, and it scales automatically when an
+  operator raises the limit to serve deeper trees; data deeper than the
+  limit is served as deep as the document goes, with a definite error
+  naming the limit (data stays — truncation is never silent). The
+  recursive type's schema description carries a one-line contract ("full
+  subtree at true depth; your selection repeats per level") once per
+  type — local placement at ~15 tokens instead of per-field paragraphs,
+  so agents discover it from the SDL.
 
 - **`instructions=` passthrough on `FastAPIMCP`** — the MCP protocol's
   handshake usage guide, injected into the agent's context once per
@@ -62,6 +72,48 @@
 
 ### Fixed
 
+- **A subselection-less recursive field is rejected, not crashed on.**
+  Selecting a back-edge without a subselection (`children` with no
+  `{ ... }`) is invalid GraphQL; it now comes back with the standard
+  "must have a selection of subfields" validation error like any other
+  field, instead of an uncaught `AssertionError` surfacing as an opaque
+  500.
+- **Custom validation rules see the document the agent wrote.** Unrolling
+  is a system behavior; caller-supplied rules (cost guards, complexity
+  caps) now validate the written document, so a 3-field recursive
+  selection is no longer rejected for having ~60x the fields the agent
+  asked for. The standard rule set still validates the expanded document
+  the executor actually runs.
+- **Union-field degradation is recorded on every side.** A union field
+  bridging to raw JSON lands in `readiness().degraded_fields` and carries
+  its schema note whether it sits on a model's output, a model's input, a
+  TypedDict's output or a TypedDict's input — the audit no longer depends
+  on which side of the API the field happens to be on.
+- **The excess walk is gated by the document.** Edge-named keys inside a
+  JSON passthrough payload are invisible to the document and can no
+  longer flag a mixed query (recursive tree + colliding payload keys)
+  that truncated nothing.
+- **The unroll limit is honest — the crash band is gone.** The old floor
+  `max(100, ...)` sat above the measured ~82-level execution ceiling, so
+  trees between ~83 and 100 levels returned `null` with a bare "maximum
+  recursion depth exceeded" instead of data. The limit is now
+  `sys.getrecursionlimit() // 16` (the deepest walk it can produce stays
+  at ~3/4 of the measured ceiling) and is pinned per handler instance at
+  construction: raising the budget later serves deeper trees on NEW
+  handlers, while an existing one reports a definite error on data beyond
+  its pinned limit instead of silently truncating against cached,
+  shallower documents.
+- **Excess detection is a proof, not a guess.** The unrolled document's
+  innermost repetition is a probe: data occupying it proves deeper data
+  exists. Complete data leaves the probe empty and is never flagged (the
+  old depth-counting heuristic fired on exactly-complete trees), and
+  single-object recursive edges (`next: LNode | None`) count like list
+  edges — they used to truncate with no report at all.
+- **Only stamped documents pay the per-response excess walk.** Queries
+  touching no recursive field never ran it and can no longer pick up
+  false flags from JSON passthrough payloads whose keys collide with
+  edge names; the walk also reuses edge names computed once per handler
+  instead of rebuilding them per response.
 - **Nested recursive chains unroll too.** Stamping a chain end makes
   graphql-core's `visit` rebuild every ancestor of the edited node, so the
   id-keyed chain-end table silently missed an outer chain end nested
