@@ -72,6 +72,17 @@
 
 ### Fixed
 
+- **The alias wire contract: GraphQL names are translated, not diverged.**
+  A wire name FastAPI validates/serializes by but GraphQL cannot spell
+  (`Query(alias="order-id")`, `Field(alias="item-sku")`) previously either
+  crashed the whole handler build or produced a schema whose every call
+  failed (input 422, output null) with the audit staying green. The schema
+  now uses the sanitized name and translates at both boundaries: output
+  fields resolve from the wire key, input objects rewrite their coerced
+  dict via `out_type` (composing through nested models), top-level
+  arguments are renamed back in the resolver, and `AliasChoices` names its
+  first string choice. Field selection and types are fully preserved —
+  nothing degrades, and the green audit is now honest.
 - **A subselection-less recursive field is rejected, not crashed on.**
   Selecting a back-edge without a subselection (`children` with no
   `{ ... }`) is invalid GraphQL; it now comes back with the standard

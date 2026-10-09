@@ -164,6 +164,40 @@ def _note(description: str | None, note: str) -> str:
     return f"{description}\n\n{note}" if description else note
 
 
+def _wire_key_resolver(wire_key: str) -> Callable[..., Any]:
+    """Reads a field's value under its WIRE key. GraphQL names are
+    legal-identifier sanitized while FastAPI serializes by the original
+    alias — the resolver closes the gap the default dict lookup cannot."""
+
+    def resolve(source: Any, _info: Any) -> Any:
+        return source.get(wire_key) if isinstance(source, dict) else None
+
+    return resolve
+
+
+def _wire_key_out_type(wire: dict[str, str]) -> Callable[[Any], Any]:
+    """Input twin of ``_wire_key_resolver``: rewrites an input object's
+    coerced dict from GraphQL field names to wire keys before the value
+    reaches FastAPI."""
+
+    def out(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {wire.get(k, k): v for k, v in value.items()}
+        return value
+
+    return out
+
+
+def _first_wire_name(raw: Any, fallback: str) -> str:
+    """A non-str alias (pydantic ``AliasChoices``) still names real wire
+    keys; FastAPI accepts any of them, so one canonical name — the first
+    string choice — is enough."""
+    for choice in getattr(raw, "choices", ()) or ():
+        if isinstance(choice, str) and choice:
+            return choice
+    return fallback
+
+
 def sanitize_graphql_name(name: str, *, what: str = "name") -> str:
     """Coerce an identifier into a legal GraphQL name (warns when changed)."""
     sanitized = re.sub(r"[^_a-zA-Z0-9]", "_", name)
@@ -422,6 +456,10 @@ class TypeBuilder:
         self._name_owner: dict[str, type] = {}
         self._built_output_fields: dict[type, dict[str, GraphQLField]] = {}
         self._built_input_fields: dict[type, dict[str, GraphQLInputField]] = {}
+        # GraphQL-name -> wire-key translations for input objects whose
+        # field names needed sanitizing (populated by the field builders,
+        # consumed by _registered_input_object as the type's out_type).
+        self._input_wire_map: dict[type, dict[str, str]] = {}
 
     # ------------------------------------------------------------------ names
 
@@ -645,7 +683,14 @@ class TypeBuilder:
                 # Surfaced by the scanner's startup log: the model's owner can
                 # regain field selection by restructuring the union away.
                 self._record_degraded(f"{model.__name__}.{field_name}", reason)
-            fields[gname] = GraphQLField(gtype, description=description)
+            if gname != json_name:
+                fields[gname] = GraphQLField(
+                    gtype,
+                    description=description,
+                    resolve=_wire_key_resolver(json_name),
+                )
+            else:
+                fields[gname] = GraphQLField(gtype, description=description)
         if not fields:
             reason = f"{model.__name__} has no usable fields"
             raise UnsupportedFieldTypeError(model, reason, field_reason=reason)
@@ -748,7 +793,14 @@ class TypeBuilder:
             # Transactional: no half-built inputs survive.
             del self._input_types[cls]
             self._release_name(name, cls)
+            self._input_wire_map.pop(cls, None)
             raise
+        wire = self._input_wire_map.get(cls)
+        if wire:
+            # graphql-core types out_type as an identity default; overriding
+            # it after registration is the supported hook (the map is only
+            # known once the fields have been built).
+            cast(Any, obj).out_type = _wire_key_out_type(wire)
         return obj
 
     def _input_fields(self, model: type[BaseModel]) -> dict[str, GraphQLInputField]:
@@ -760,8 +812,10 @@ class TypeBuilder:
             # those fall back to the field name.
             req_name = info.validation_alias or info.alias or field_name
             if not isinstance(req_name, str):
-                req_name = field_name
+                req_name = _first_wire_name(req_name, field_name)
             gname = sanitize_graphql_name(req_name, what=f"{model.__name__} input field")
+            if gname != req_name:
+                self._input_wire_map.setdefault(model, {})[gname] = req_name
             annotation = resolve_annotation(info.annotation, ns)
             field_type, degraded = self._degradable_input_type(
                 annotation, context=f"{model.__name__}.{field_name}"
@@ -819,7 +873,14 @@ class TypeBuilder:
                 reason, note = bridge
                 description = _note(description, note)
                 self._record_degraded(f"{td.__name__}.{field_name}", reason)
-            fields[gname] = GraphQLField(gtype, description=description)
+            if gname != field_name:
+                fields[gname] = GraphQLField(
+                    gtype,
+                    description=description,
+                    resolve=_wire_key_resolver(field_name),
+                )
+            else:
+                fields[gname] = GraphQLField(gtype, description=description)
         if not fields:
             reason = f"{td.__name__} has no usable fields"
             raise UnsupportedFieldTypeError(td, reason, field_reason=reason)
@@ -834,6 +895,8 @@ class TypeBuilder:
             gname = sanitize_graphql_name(
                 field_name, what=f"{td.__name__} input field"
             )
+            if gname != field_name:
+                self._input_wire_map.setdefault(td, {})[gname] = field_name
             field_type, degraded = self._degradable_input_type(
                 annotation, context=f"{td.__name__}.{field_name}"
             )

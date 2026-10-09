@@ -30,6 +30,8 @@ from fastapi_gql_mcp.naming import field_name_for
 from fastapi_gql_mcp.type_builder import (
     TypeBuilder,
     UnsupportedFieldTypeError,
+    _first_wire_name,
+    sanitize_graphql_name,
     union_members,
 )
 
@@ -79,6 +81,9 @@ class ParamInfo:
     embed: bool = False
     raw_name: str = ""  # function-arg name, used for path-template replacement
     description: str | None = None  # from Query()/Body() metadata
+    # GraphQL-side argument name when the wire name is not a legal GraphQL
+    # identifier (empty = same as ``name``); the resolver translates back.
+    gname: str = ""
 
 
 @dataclass(frozen=True)
@@ -200,10 +205,12 @@ def _expand_query_model(model: type[BaseModel]) -> list[ParamInfo]:
     params: list[ParamInfo] = []
     for field_name, info in model.model_fields.items():
         request_name: str = field_name
-        for candidate in (info.validation_alias, info.alias):
-            if isinstance(candidate, str) and candidate:
-                request_name = candidate
-                break
+        raw = info.validation_alias or info.alias
+        if isinstance(raw, str) and raw:
+            request_name = raw
+        elif raw is not None:
+            request_name = _first_wire_name(raw, field_name)
+        gname = sanitize_graphql_name(request_name, what="argument name")
         required = bool(info.is_required())
         params.append(
             ParamInfo(
@@ -213,6 +220,7 @@ def _expand_query_model(model: type[BaseModel]) -> list[ParamInfo]:
                 default=None if required else info.get_default(call_default_factory=False),
                 raw_name=field_name,
                 description=info.description,
+                gname="" if gname == request_name else gname,
             )
         )
     return params
@@ -221,8 +229,16 @@ def _expand_query_model(model: type[BaseModel]) -> list[ParamInfo]:
 def _to_param_info(model_field: Any, *, path_param: bool = False) -> ParamInfo:
     field_info: FieldInfo = model_field.field_info
     annotation = field_info.annotation
-    # Request-side name: FastAPI validates against validation_alias/alias/name.
-    name = model_field.validation_alias or model_field.alias or model_field.name
+    # Request-side name: FastAPI validates against validation_alias/alias/name
+    # (AliasChoices yields its first string choice — FastAPI accepts any).
+    raw = model_field.validation_alias or model_field.alias
+    name = raw if isinstance(raw, str) and raw else model_field.name
+    if not (isinstance(raw, str) and raw):
+        name = _first_wire_name(raw, model_field.name)
+    # The GraphQL argument name must be a legal identifier; when sanitizing
+    # changes it, the schema uses the sanitized name and the resolver
+    # translates it back to the wire name.
+    gname = sanitize_graphql_name(name, what="argument name")
     required = path_param or _param_required(field_info)
     return ParamInfo(
         name=name,
@@ -232,6 +248,7 @@ def _to_param_info(model_field: Any, *, path_param: bool = False) -> ParamInfo:
         embed=bool(getattr(field_info, "embed", False)),
         raw_name=model_field.name,
         description=getattr(field_info, "description", None),
+        gname="" if gname == name else gname,
     )
 
 
