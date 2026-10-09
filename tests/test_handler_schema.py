@@ -588,3 +588,38 @@ class TestSkips:
     def test_no_skips_on_clean_app(self):
         h = RouterGraphQLHandler(build_app(), allow_mutation=True)
         assert h.skips == []
+
+
+class TestRecursiveResponseModels:
+    """Self-referencing Pydantic models, end to end: schema build, SDL and
+    actual nested execution (the regression scenario from
+    tadata-org/fastapi_mcp#155 — RecursionError in their OpenAPI $ref
+    resolution; here recursion is a native GraphQL shape)."""
+
+    async def test_recursive_model_builds_sdl_and_executes_nested(self):
+        class Node(BaseModel):
+            name: str
+            children: list["Node"] = []
+
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["tree"])
+        async def tree():
+            return Node(
+                name="root",
+                children=[
+                    Node(name="a"),
+                    Node(name="b", children=[Node(name="c")]),
+                ],
+            )
+
+        handler = RouterGraphQLHandler(app)
+        sdl = handler.get_sdl()
+        assert "children" in sdl  # the cycle resolved, not refused
+
+        result = await handler.execute(
+            "{ tree { tree { name children { name children { name } } } } }"
+        )
+        assert "errors" not in result, result
+        nested = result["data"]["tree"]["tree"]
+        assert nested["children"][1]["children"][0]["name"] == "c"
