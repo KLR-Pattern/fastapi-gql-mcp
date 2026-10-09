@@ -1,79 +1,20 @@
-"""scanner: FastAPI routes -> RouteInfo / SkipRecord."""
+"""scanner: FastAPI routes -> RouteInfo / SkipRecord (unit altitude).
 
+Scan-level behavior only: discovery, filtering, skips, params, readiness.
+Contracts that execute through RouterGraphQLHandler live in
+integration/test_scanner_contract.py.
+"""
+
+import logging
 from enum import Enum
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, Query
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi import APIRouter, FastAPI, Form, Query, WebSocket
 from pydantic import BaseModel, Field
 
 from fastapi_gql_mcp.scanner import RouterScanner, SkipRecord
-
-
-class ItemOut(BaseModel):
-    id: int
-    name: str
-
-
-class ItemCreate(BaseModel):
-    name: str
-
-
-def build_app() -> FastAPI:
-    app = FastAPI()
-
-    def dep_filter(active: bool = Query(True)):
-        return active
-
-    @app.get("/items", response_model=list[ItemOut], tags=["shop:catalog"])
-    async def list_items(active: bool = Depends(dep_filter), limit: int = Query(10)):
-        return [ItemOut(id=1, name="a")] * limit
-
-    @app.get("/items/{item_id}", response_model=ItemOut, tags=["shop:catalog"])
-    async def get_item(item_id: int):
-        return ItemOut(id=item_id, name="a")
-
-    @app.get("/ping")
-    async def ping():
-        return {"pong": True}
-
-    @app.get("/health", response_model=ItemOut)
-    async def health():
-        return ItemOut(id=0, name="ok")
-
-    @app.post("/items", response_model=ItemOut)
-    async def create_item(payload: ItemCreate):
-        return ItemOut(id=2, name=payload.name)
-
-    @app.post("/bulk", response_model=list[ItemOut])
-    async def create_bulk(a: ItemCreate, b: ItemCreate):
-        return []
-
-    @app.get("/raw")
-    async def raw() -> PlainTextResponse:
-        return PlainTextResponse("x")
-
-    @app.get("/stream")
-    async def stream() -> StreamingResponse:
-        return StreamingResponse(iter(["x"]))
-
-    @app.get("/hidden", include_in_schema=False, response_model=ItemOut)
-    async def hidden():
-        return ItemOut(id=0, name="h")
-
-    @app.get("/needs-header")
-    async def needs_header(x_token: Annotated[str, Header()]):
-        return {"ok": True}
-
-    @app.get("/optional-header")
-    async def optional_header(x_opt: Annotated[str | None, Header()] = None):
-        return {"ok": True}
-
-    @app.patch("/items/{item_id}", response_model=ItemOut)
-    async def patch_item(item_id: int, payload: ItemCreate):
-        return ItemOut(id=item_id, name=payload.name)
-
-    return app
+from tests.support.apps import scanner_app
+from tests.support.models import Err, ItemCreate, ItemOut
 
 
 def scan(app, **kw):
@@ -90,23 +31,18 @@ def skip_reasons(skips, path):
 
 class TestDiscovery:
     def test_get_routes_discovered(self):
-        routes, _ = scan(build_app())
+        routes, _ = scan(scanner_app())
         names = [r.field_name for r in routes]
         assert "list_items" in names
         assert "get_item" in names  # function names, no verb/param rewriting
 
     def test_field_names(self):
-        routes, _ = scan(build_app(), allow_mutation=True)
+        routes, _ = scan(scanner_app(), allow_mutation=True)
         assert by_field(routes, "list_items").path == "/items"
         assert by_field(routes, "create_item").method == "POST"
 
-    def test_path_params_required(self):
-        routes, _ = scan(build_app())
-        r = by_field(routes, "get_item")
-        assert r is not None
-
     def test_depends_query_params_merged(self):
-        routes, _ = scan(build_app())
+        routes, _ = scan(scanner_app())
         r = by_field(routes, "list_items")
         qnames = [p.name for p in r.query_params]
         assert "active" in qnames and "limit" in qnames
@@ -114,27 +50,27 @@ class TestDiscovery:
 
 class TestMutationGating:
     def test_mutations_skipped_by_default(self):
-        routes, skips = scan(build_app())
+        routes, skips = scan(scanner_app())
         assert all(not r.is_mutation for r in routes)
         assert any("/items" in s.path and s.method == "POST" for s in skips)
 
     def test_mutations_included_when_allowed(self):
-        routes, skips = scan(build_app(), allow_mutation=True)
+        routes, skips = scan(scanner_app(), allow_mutation=True)
         assert by_field(routes, "create_item").is_mutation
         assert by_field(routes, "patch_item").method == "PATCH"
 
 
 class TestFiltering:
     def test_include_glob(self):
-        routes, _ = scan(build_app(), include=["/items*"])
+        routes, _ = scan(scanner_app(), include=["/items*"])
         assert {r.path for r in routes} <= {"/items", "/items/{item_id}"}
 
     def test_exclude_glob(self):
-        routes, _ = scan(build_app(), exclude=["/ping", "/raw", "/stream"])
+        routes, _ = scan(scanner_app(), exclude=["/ping", "/raw", "/stream"])
         assert all(r.path not in {"/ping", "/raw", "/stream"} for r in routes)
 
     def test_exclude_wins_over_include(self):
-        routes, _ = scan(build_app(), include=["/items*"], exclude=["/items/{item_id}"])
+        routes, _ = scan(scanner_app(), include=["/items*"], exclude=["/items/{item_id}"])
         assert "/items/{item_id}" not in {r.path for r in routes}
 
 
@@ -237,33 +173,31 @@ class TestTagFiltering:
 
 class TestSkips:
     def test_untyped_response_bridges_as_any(self):
-        routes, skips = scan(build_app())
+        routes, skips = scan(scanner_app())
         assert by_field(routes, "ping").response_annotation is Any
         assert not any("no typed response" in r for r in skip_reasons(skips, "/ping"))
 
     def test_raw_response_skipped(self):
-        _, skips = scan(build_app())
+        _, skips = scan(scanner_app())
         assert any("raw Response" in r for r in skip_reasons(skips, "/raw"))
         assert any("raw Response" in r for r in skip_reasons(skips, "/stream"))
 
     def test_hidden_route_skipped(self):
-        _, skips = scan(build_app())
+        _, skips = scan(scanner_app())
         assert any("hidden" in r for r in skip_reasons(skips, "/hidden"))
 
     def test_hidden_route_included_when_asked(self):
-        routes, _ = scan(build_app(), include_hidden=True)
+        routes, _ = scan(scanner_app(), include_hidden=True)
         assert any(r.path == "/hidden" for r in routes)
 
     def test_required_header_skipped(self):
-        _, skips = scan(build_app())
+        _, skips = scan(scanner_app())
         assert any("header/cookie" in r for r in skip_reasons(skips, "/needs-header"))
 
     def test_form_only_scalar_skipped(self):
         """G12 regression: Annotated[str, Form()] has a perfectly valid
         GraphQL annotation, so the type check alone would let it through
         into a field that always 422s at runtime (invoker sends JSON)."""
-        from fastapi import Form
-
         app = FastAPI()
 
         @app.post("/ff", response_model=ItemOut)
@@ -279,13 +213,13 @@ class TestSkips:
     def test_optional_header_does_not_trigger_header_skip(self):
         # Optional headers are simply not sent; the route is skipped for its
         # untyped response instead, never for the optional header itself.
-        _, skips = scan(build_app())
+        _, skips = scan(scanner_app())
         assert not any("header/cookie" in r for r in skip_reasons(skips, "/optional-header"))
 
 
 class TestParams:
     def test_query_param_defaults(self):
-        routes, _ = scan(build_app())
+        routes, _ = scan(scanner_app())
         r = by_field(routes, "list_items")
         limit = next(p for p in r.query_params if p.name == "limit")
         assert limit.required is False
@@ -294,18 +228,18 @@ class TestParams:
         assert active.required is False  # dep default True... depends' Query(True)
 
     def test_single_body_not_embedded(self):
-        routes, _ = scan(build_app(), allow_mutation=True)
+        routes, _ = scan(scanner_app(), allow_mutation=True)
         r = by_field(routes, "create_item")
         assert len(r.body_params) == 1
         assert r.body_params[0].embed is False
 
     def test_multiple_bodies_embedded(self):
-        routes, _ = scan(build_app(), allow_mutation=True)
+        routes, _ = scan(scanner_app(), allow_mutation=True)
         r = by_field(routes, "create_bulk")
         assert all(p.embed for p in r.body_params)
 
     def test_response_annotation(self):
-        routes, _ = scan(build_app())
+        routes, _ = scan(scanner_app())
         assert by_field(routes, "get_item").response_annotation is ItemOut
 
     def test_deprecated_flag_captured(self):
@@ -326,11 +260,11 @@ class TestParams:
 
 class TestDomains:
     def test_tag_domains(self):
-        routes, _ = scan(build_app())
+        routes, _ = scan(scanner_app())
         assert by_field(routes, "list_items").domains == frozenset({("shop", "catalog")})
 
     def test_untagged_falls_back_to_path(self):
-        routes, _ = scan(build_app())
+        routes, _ = scan(scanner_app())
         assert by_field(routes, "health").domains == frozenset({("health",)})
 
 
@@ -363,10 +297,25 @@ class TestTypeTrials:
         assert (rec.path, rec.method, rec.reason) == ("/x", "GET", "why")
 
 
+class TestInputSideUnions:
+    """Request-body unions bridge as the JSON scalar, symmetric with the
+    output side: the agent sends either member's JSON and FastAPI's
+    validation decides (422 -> field error). Issue #3, case 4."""
+
+    def test_input_side_union_bridges_as_json(self):
+        app = FastAPI()
+
+        @app.post("/u", tags=["u"])
+        async def create(payload: ItemOut | Err) -> dict:
+            return {"ok": True}
+
+        routes, skips = RouterScanner(app, allow_mutation=True).scan()
+        assert len(routes) == 1
+        assert skips == []
+
+
 class TestMountAndSockets:
     def test_websocket_and_mount_ignored(self):
-        from fastapi import WebSocket
-
         app = FastAPI()
         sub = FastAPI()
 
@@ -391,17 +340,11 @@ class TestJsonFallbackNotices:
     undiagnosable downgrade. Top-level union responses and serialization
     filters report per-route; union fields nested in models report per-field."""
 
-    class Err(BaseModel):
-        code: int
-        message: str
-
     def test_union_response_notice_names_members_and_remedy(self, caplog):
-        import logging
-
         app = FastAPI()
 
         @app.get("/risky", tags=["u"])
-        async def risky(ok: bool = True) -> ItemOut | TestJsonFallbackNotices.Err:
+        async def risky(ok: bool = True) -> ItemOut | Err:
             return ItemOut(id=1, name="n")
 
         with caplog.at_level(logging.WARNING, logger="fastapi_gql_mcp.scanner"):
@@ -413,10 +356,8 @@ class TestJsonFallbackNotices:
         assert "restructure into one model per shape" in rendered
 
     def test_nested_union_field_notice_names_the_field(self, caplog):
-        import logging
-
         class Wrapped(BaseModel):
-            result: ItemOut | TestJsonFallbackNotices.Err
+            result: ItemOut | Err
 
         app = FastAPI()
 
@@ -431,8 +372,6 @@ class TestJsonFallbackNotices:
         assert "Wrapped.result (ItemOut, Err)" in caplog.text
 
     def test_response_filter_notice(self, caplog):
-        import logging
-
         app = FastAPI()
 
         @app.get("/sparse", response_model=ItemOut,
@@ -445,8 +384,6 @@ class TestJsonFallbackNotices:
         assert "response filtered via response_model_exclude_unset" in caplog.text
 
     def test_no_notice_for_structured_routes(self, caplog):
-        import logging
-
         app = FastAPI()
 
         @app.get("/clean", response_model=ItemOut)
@@ -460,10 +397,6 @@ class TestJsonFallbackNotices:
 
 class TestQueryParameterModels:
     def test_lone_query_model_expanded(self):
-        from typing import Annotated
-
-        from fastapi import Query
-
         class ItemFilter(BaseModel):
             category: str
             min_price: float = 0.0
@@ -484,40 +417,7 @@ class TestQueryParameterModels:
         assert q["min_price"].default == 0.0
         assert q["pageSize"].default == 20
 
-    async def test_query_model_end_to_end(self):
-        from typing import Annotated
-
-        from fastapi import Query
-
-        from fastapi_gql_mcp.handler import RouterGraphQLHandler
-
-        class ItemFilter(BaseModel):
-            category: str
-            limit: int = 2
-
-        app = FastAPI()
-        seen: dict = {}
-
-        @app.get("/things", response_model=list[ItemOut], tags=["demo"])
-        async def things(filters: Annotated[ItemFilter, Query()]):
-            seen.update(filters.model_dump())
-            return [ItemOut(id=i, name=filters.category) for i in range(filters.limit)]
-
-        handler = RouterGraphQLHandler(app)
-        sdl = handler.get_sdl()
-        assert "things(category: String!, limit: Int = 2): [ItemOut!]" in sdl
-        result = await handler.execute(
-            "{ demo { things(category: \"tools\") { name } } }"
-        )
-        assert result == {"data": {"demo": {"things": [{"name": "tools"}, {"name": "tools"}]}}}
-        assert seen == {"category": "tools", "limit": 2}
-        await handler.aclose()
-
     def test_query_model_mixed_with_plain_param_skipped(self):
-        from typing import Annotated
-
-        from fastapi import Query
-
         class ItemFilter(BaseModel):
             category: str
 
@@ -534,8 +434,6 @@ class TestQueryParameterModels:
 
 class TestIncludeRouter:
     def test_routers_via_include_router_are_discovered(self):
-        from fastapi import APIRouter
-
         inner = APIRouter()
 
         @inner.get("/inner", response_model=ItemOut)
@@ -626,7 +524,7 @@ class TestReadiness:
         assert report.degraded_fields == (("SearchOut.hit", "CatOut, DogOut"),)
 
     def test_skips_section_lists_exclusions(self):
-        report = RouterScanner(build_app()).readiness()
+        report = RouterScanner(scanner_app()).readiness()
         paths = {s.path for s in report.skips}
         assert {"/raw", "/stream", "/needs-header", "/hidden"} <= paths
         assert not report.ready
@@ -662,18 +560,9 @@ class TestReadiness:
         ).readiness()
         assert report.ready
 
-    def test_handler_readiness_matches_scanner(self):
-        from fastapi_gql_mcp import RouterGraphQLHandler
-
-        app = build_app()
-        handler = RouterGraphQLHandler(app, allow_mutation=True)
-        assert handler.readiness() == RouterScanner(app, allow_mutation=True).readiness()
-
     def test_startup_notice_texts_match_report_reasons(self, caplog):
         """The notice and the report share one classifier: every report
         reason appears verbatim in the startup warning."""
-        import logging
-
         with caplog.at_level(logging.WARNING, logger="fastapi_gql_mcp.scanner"):
             report = RouterScanner(build_degraded_app()).readiness()
         rendered = next(
@@ -700,15 +589,3 @@ class TestDeprecatedFiltering:
         routes, skips = scan(app, exclude_deprecated=True)
         assert {r.path for r in routes} == {"/new"}
         assert not any(s.path == "/old" for s in skips)  # config drop, not a skip
-
-    def test_deprecated_kept_with_mark_by_default(self):
-        app = FastAPI()
-
-        @app.get("/old", deprecated=True, response_model=ItemOut)
-        async def old():
-            return ItemOut(id=1, name="o")
-
-        from fastapi_gql_mcp import RouterGraphQLHandler
-
-        sdl = RouterGraphQLHandler(app).get_sdl()
-        assert "old: ItemOut @deprecated" in sdl

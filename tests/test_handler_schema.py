@@ -5,7 +5,6 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from fastapi_gql_mcp.handler import GQLMCPConfigError, RouterGraphQLHandler
-from fastapi_gql_mcp.scanner import RouterScanner
 from fastapi_gql_mcp.schema_builder import DuplicateArgError
 from fastapi_gql_mcp.type_builder import TypeBuilder
 
@@ -61,10 +60,6 @@ class TestSDLAndIntrospection:
         h = RouterGraphQLHandler(build_app(), allow_mutation=False)
         assert "Mutation" not in h.get_sdl()
         assert "create_item" not in h.get_sdl()
-
-    async def test_introspection_works(self, handler):
-        result = await handler.execute("{ __schema { queryType { name } } }")
-        assert result == {"data": {"__schema": {"queryType": {"name": "Query"}}}}
 
 
 class TestDomainCollisions:
@@ -487,20 +482,6 @@ class TestUnionFallback:
             }
         }
         await handler.aclose()
-
-    def test_input_side_union_bridges_as_json(self):
-        """Request-body unions bridge as the JSON scalar, symmetric with the
-        output side: the agent sends either member's JSON and FastAPI's
-        validation decides (422 -> field error)."""
-        app = FastAPI()
-
-        @app.post("/u", tags=["u"])
-        async def create(payload: ItemOut | TestUnionFallback.Err) -> dict:
-            return {"ok": True}
-
-        routes, skips = RouterScanner(app, allow_mutation=True).scan()
-        assert len(routes) == 1
-        assert skips == []
 
 
 

@@ -5,7 +5,10 @@ Factories are FUNCTIONS called per test. Several build mutable state
 module-level app instance would leak state between tests. Never bind one.
 """
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from tests.support.models import (
@@ -147,6 +150,65 @@ def big_app(n: int = 30) -> FastAPI:
             return handler
 
         app.get(f"/thing{i}", response_model=ThingOut)(make_handler(i))
+
+    return app
+
+
+def scanner_app() -> FastAPI:
+    """Route-exposure matrix app: one route per scanner outcome (clean,
+    dependency-merged, raw Response, hidden, required-header, multi-verb)."""
+    app = FastAPI()
+
+    def dep_filter(active: bool = Query(True)):
+        return active
+
+    @app.get("/items", response_model=list[ItemOut], tags=["shop:catalog"])
+    async def list_items(active: bool = Depends(dep_filter), limit: int = Query(10)):
+        return [ItemOut(id=1, name="a")] * limit
+
+    @app.get("/items/{item_id}", response_model=ItemOut, tags=["shop:catalog"])
+    async def get_item(item_id: int):
+        return ItemOut(id=item_id, name="a")
+
+    @app.get("/ping")
+    async def ping():
+        return {"pong": True}
+
+    @app.get("/health", response_model=ItemOut)
+    async def health():
+        return ItemOut(id=0, name="ok")
+
+    @app.post("/items", response_model=ItemOut)
+    async def create_item(payload: ItemCreate):
+        return ItemOut(id=2, name=payload.name)
+
+    @app.post("/bulk", response_model=list[ItemOut])
+    async def create_bulk(a: ItemCreate, b: ItemCreate):
+        return []
+
+    @app.get("/raw")
+    async def raw() -> PlainTextResponse:
+        return PlainTextResponse("x")
+
+    @app.get("/stream")
+    async def stream() -> StreamingResponse:
+        return StreamingResponse(iter(["x"]))
+
+    @app.get("/hidden", include_in_schema=False, response_model=ItemOut)
+    async def hidden():
+        return ItemOut(id=0, name="h")
+
+    @app.get("/needs-header")
+    async def needs_header(x_token: Annotated[str, Header()]):
+        return {"ok": True}
+
+    @app.get("/optional-header")
+    async def optional_header(x_opt: Annotated[str | None, Header()] = None):
+        return {"ok": True}
+
+    @app.patch("/items/{item_id}", response_model=ItemOut)
+    async def patch_item(item_id: int, payload: ItemCreate):
+        return ItemOut(id=item_id, name=payload.name)
 
     return app
 
