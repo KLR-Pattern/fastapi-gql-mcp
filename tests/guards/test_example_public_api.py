@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-EXAMPLES = Path(__file__).parent.parent / "examples"
+EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 
 
 def python_sources() -> list[Path]:

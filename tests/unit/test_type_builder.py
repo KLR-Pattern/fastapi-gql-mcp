@@ -59,6 +59,11 @@ class TestScalars:
     def test_int_or_none_union_type(self):
         assert render(TypeBuilder().output_type(int | None)) == "Int"
 
+    def test_optional_union_stays_nullable_json(self):
+        # Non-Optional unions pick their member at runtime, so they bridge to
+        # the JSON scalar; Optional keeps the nullable wrapper (issue #3, case 4).
+        assert render(TypeBuilder().output_type(int | str | None)) == "JSON"
+
     def test_list_of_scalars(self):
         assert render(TypeBuilder().output_type(list[int])) == "[Int!]!"
 
@@ -258,7 +263,3 @@ class TestObjects:
 
     def test_output_list_of_models(self):
         assert str(TypeBuilder().output_type(list[UserOut])) == "[UserOut!]!"
-
-    def test_list_type_detected(self):
-
-        assert str(TypeBuilder().output_type(list[int])) == "[Int!]!"

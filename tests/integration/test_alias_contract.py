@@ -16,12 +16,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from typing_extensions import TypedDict
 
 from fastapi_gql_mcp.handler import RouterGraphQLHandler
-
-
-def _pong(app: FastAPI) -> None:
-    @app.get("/ping", response_model=str, tags=["t"])
-    async def ping() -> str:
-        return "pong"
+from tests.support.apps import add_ping
 
 
 class TestTopLevelParams:
@@ -67,7 +62,7 @@ class TestModelFields:
             sku: str = Field(alias="item-sku")
 
         app = FastAPI()
-        _pong(app)
+        add_ping(app)
 
         @app.post("/create", tags=["t"])
         async def create(body: CreateBody) -> str:
@@ -106,7 +101,7 @@ class TestModelFields:
             mode: str = Field(validation_alias=AliasChoices("m1", "m2"))
 
         app = FastAPI()
-        _pong(app)
+        add_ping(app)
 
         @app.post("/set", tags=["t"])
         async def set_mode(body: ACBody) -> str:
@@ -129,7 +124,7 @@ class TestModelFields:
             inner: Inner
 
         app = FastAPI()
-        _pong(app)
+        add_ping(app)
 
         @app.post("/order", tags=["t"])
         async def order(body: Outer) -> str:

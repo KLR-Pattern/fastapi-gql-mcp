@@ -12,7 +12,7 @@ import fastapi_gql_mcp
 
 
 def test_dunder_version_matches_pyproject():
-    pyproject = Path(__file__).parent.parent / "pyproject.toml"
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
     match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.M)
     assert match, "pyproject.toml lost its version field"
     assert fastapi_gql_mcp.__version__ == match.group(1), (

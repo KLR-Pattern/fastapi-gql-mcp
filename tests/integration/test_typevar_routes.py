@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from fastapi_gql_mcp.handler import RouterGraphQLHandler
+from tests.support.apps import add_ping
 
 
 class TextUnit(BaseModel):
@@ -27,12 +28,6 @@ class NumberUnit(BaseModel):
 ConstrainedT = TypeVar("ConstrainedT", TextUnit, NumberUnit)
 BoundT = TypeVar("BoundT", bound=TextUnit)
 BareT = TypeVar("BareT")
-
-
-def _pong(app: FastAPI) -> None:
-    @app.get("/ping", response_model=str, tags=["t"])
-    async def ping() -> str:
-        return "pong"
 
 
 class TestNormalization:
@@ -55,7 +50,7 @@ class TestNormalization:
 
     async def test_constrained_typevar_input_route_survives(self):
         app = FastAPI()
-        _pong(app)
+        add_ping(app)
 
         @app.post("/accept", tags=["t"])
         async def accept(payload: list[list[ConstrainedT]]) -> int:
@@ -112,7 +107,7 @@ class TestUnboundedFallback:
         TypeVar field gets inside a model; readiness distinguishes the
         degradation from a removal."""
         app = FastAPI()
-        _pong(app)
+        add_ping(app)
 
         @app.get("/out", response_model=list[BareT], tags=["t"])
         async def out() -> list:

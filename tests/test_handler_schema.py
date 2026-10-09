@@ -488,11 +488,6 @@ class TestUnionFallback:
         }
         await handler.aclose()
 
-    def test_optional_union_stays_nullable_json(self):
-        from fastapi_gql_mcp.type_builder import TypeBuilder
-
-        assert render_type(TypeBuilder().output_type(int | str | None)) == "JSON"
-
     def test_input_side_union_bridges_as_json(self):
         """Request-body unions bridge as the JSON scalar, symmetric with the
         output side: the agent sends either member's JSON and FastAPI's
@@ -507,9 +502,6 @@ class TestUnionFallback:
         assert len(routes) == 1
         assert skips == []
 
-
-def render_type(t) -> str:
-    return str(t)
 
 
 class TestDeprecation:

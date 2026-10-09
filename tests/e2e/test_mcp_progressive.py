@@ -1,6 +1,5 @@
 """MCP progressive mode: 4-layer disclosure over the domain tree."""
 
-import json
 from typing import Annotated
 
 import pytest
@@ -9,6 +8,7 @@ from fastmcp import Client
 from pydantic import BaseModel
 
 from fastapi_gql_mcp import FastAPIMCP
+from tests.support.mcp import tool_payload
 
 
 class Out(BaseModel):
@@ -47,14 +47,10 @@ def mcp():
     return FastAPIMCP(build_app(), name="prog", allow_mutation=True, mode="progressive")
 
 
-def payload(result) -> dict:
-    return json.loads(result.content[0].text)
-
-
 class TestListDomains:
     async def test_list_domains(self, mcp):
         async with Client(mcp.mcp) as client:
-            result = payload(await client.call_tool("list_domains", {}))
+            result = tool_payload(await client.call_tool("list_domains", {}))
         assert result["success"] is True
         domains = {d["name"]: d for d in result["data"]["domains"]}
         assert domains["iam"]["queries"] == 2
@@ -66,14 +62,14 @@ class TestListDomains:
 class TestListQueries:
     async def test_subtree_fields_listed(self, mcp):
         async with Client(mcp.mcp) as client:
-            result = payload(await client.call_tool("list_queries", {"domain": "iam"}))
+            result = tool_payload(await client.call_tool("list_queries", {"domain": "iam"}))
         names = [q["name"] for q in result["data"]["queries"]]
         assert "list_users" in names and "get_role" in names
         assert "invoices" not in names
 
     async def test_deep_domain_path(self, mcp):
         async with Client(mcp.mcp) as client:
-            result = payload(await client.call_tool("list_queries", {"domain": "iam:users"}))
+            result = tool_payload(await client.call_tool("list_queries", {"domain": "iam:users"}))
         assert [q["name"] for q in result["data"]["queries"]] == ["list_users"]
 
     async def test_args_brief(self, mcp):
@@ -87,7 +83,7 @@ class TestListQueries:
 
         m = FastAPIMCP(app, mode="progressive")
         async with Client(m.mcp) as client:
-            result = payload(await client.call_tool("list_queries", {"domain": "t"}))
+            result = tool_payload(await client.call_tool("list_queries", {"domain": "t"}))
         query = result["data"]["queries"][0]
         assert query["args"] == [
             {"name": "limit", "type": "Int", "description": "how many things"}
@@ -102,26 +98,26 @@ class TestListQueries:
 
         m = FastAPIMCP(app, mode="progressive")
         async with Client(m.mcp) as client:
-            result = payload(await client.call_tool("list_queries", {"domain": "t"}))
+            result = tool_payload(await client.call_tool("list_queries", {"domain": "t"}))
         assert result["data"]["queries"][0]["deprecated"] is True
 
     async def test_unknown_domain_error(self, mcp):
         async with Client(mcp.mcp) as client:
-            result = payload(await client.call_tool("list_queries", {"domain": "nope"}))
+            result = tool_payload(await client.call_tool("list_queries", {"domain": "nope"}))
         assert result["success"] is False
         assert result["error_type"] == "domain_not_found"
         assert "iam" in result["hint"]
 
     async def test_list_mutations(self, mcp):
         async with Client(mcp.mcp) as client:
-            result = payload(await client.call_tool("list_mutations", {"domain": "iam"}))
+            result = tool_payload(await client.call_tool("list_mutations", {"domain": "iam"}))
         assert [m["name"] for m in result["data"]["mutations"]] == ["create_user"]
 
 
 class TestGetQuerySchema:
     async def test_fragment_scoped_to_domain(self, mcp):
         async with Client(mcp.mcp) as client:
-            result = payload(await client.call_tool("get_query_schema", {"domain": "iam"}))
+            result = tool_payload(await client.call_tool("get_query_schema", {"domain": "iam"}))
         sdl = result["data"]["sdl"]
         assert "list_users" in sdl and "get_role" in sdl
         assert "invoices" not in sdl
@@ -131,7 +127,7 @@ class TestGetQuerySchema:
 
     async def test_leaf_fragment_excludes_siblings(self, mcp):
         async with Client(mcp.mcp) as client:
-            result = payload(
+            result = tool_payload(
                 await client.call_tool("get_query_schema", {"domain": "iam:roles"})
             )
         sdl = result["data"]["sdl"]
@@ -145,7 +141,7 @@ class TestExecutionNotScoped:
         # Discovery is scoped, execution is not: fields from different domains
         # combine in one query.
         async with Client(mcp.mcp) as client:
-            result = payload(
+            result = tool_payload(
                 await client.call_tool(
                     "graphql_query",
                     {
@@ -162,7 +158,7 @@ class TestExecutionNotScoped:
 
     async def test_mutation_tool_available(self, mcp):
         async with Client(mcp.mcp) as client:
-            result = payload(
+            result = tool_payload(
                 await client.call_tool(
                     "graphql_mutation",
                     {

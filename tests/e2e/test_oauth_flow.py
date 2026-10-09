@@ -30,6 +30,7 @@ from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import BaseModel
 
 from fastapi_gql_mcp import FastAPIMCP
+from tests.support.mcp import asgi_client_factory
 
 SECRET = b"test-oauth-secret"
 USERS_DB = {"alice": "wonderland", "bob": "builder"}
@@ -118,13 +119,6 @@ def build_mcp(app: FastAPI, *, exclude_oauth: bool = True) -> FastAPIMCP:
     )
     mcp.mount_to(app, "/mcp")
     return mcp
-
-
-def asgi_client_factory(app: FastAPI):
-    def factory(**kwargs) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), **kwargs)
-
-    return factory
 
 
 async def fetch_token(app: FastAPI, username: str, password: str) -> str:
