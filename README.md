@@ -1,5 +1,8 @@
 # fastapi-gql-mcp
 
+[![pypi](https://img.shields.io/pypi/v/fastapi-gql-mcp.svg)](https://pypi.python.org/pypi/fastapi-gql-mcp)
+[![PyPI Downloads](https://static.pepy.tech/badge/fastapi-gql-mcp/month)](https://pepy.tech/projects/fastapi-gql-mcp)
+
 Turn any FastAPI router into a **GraphQL query layer + MCP server** — zero decorators,
 zero model changes.
 
