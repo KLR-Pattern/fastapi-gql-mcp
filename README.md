@@ -139,6 +139,14 @@ Rules worth knowing:
   writes in DIFFERENT domains are ordered; writes grouped under the SAME
   domain run in parallel like query fields. When write order matters, put the
   operations in separate domains or send separate mutation documents.
+- **Recursive models return their true depth.** Selecting a recursive
+  field means "the whole subtree": the selection shape where you stop
+  repeats to whatever depth the data has — the route already computed the
+  full tree, and the bridge hands it over complete instead of truncating
+  at the document's depth (truncation there was invisible: `children: []`
+  on a leaf is indistinguishable from a cut-off subtree). `max_depth`
+  still guards the document you write; per-level field filtering applies
+  at every depth.
 - **Dynamic shapes pass through as `JSON`** — `dict`/`Any` annotations bridge
   as the `JSON` scalar in both directions (a `JSON` argument lands as the raw
   request body); untyped routes, serialization-filtered responses and unions

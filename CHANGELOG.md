@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Recursive fields return their true depth.** A selection on a recursive
+  model field now means "the whole subtree": the agent's stopping selection
+  repeats as a template to the data's actual depth, at any position in the
+  document (the chain need not start at the root). Previously the finite
+  GraphQL document silently truncated recursive data — invisibly, since a
+  leaf's `children: []` is indistinguishable from a cut-off subtree, and
+  trees deeper than `max_depth` could not be fetched in full at all. The
+  route already computed the complete tree (routes are called once; nested
+  resolution is pure projection), so unrolling merely removes the document
+  limitation. `max_depth` still guards the document as written; fragments
+  in a recursive template and mutual recursion (A.b: B / B.a: A) are
+  consciously left unexpanded.
+
 - **`instructions=` passthrough on `FastAPIMCP`** — the MCP protocol's
   handshake usage guide, injected into the agent's context once per
   connection; `None` (default) sends nothing. README documents how to

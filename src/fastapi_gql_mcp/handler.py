@@ -26,6 +26,13 @@ from opentelemetry import trace
 
 from fastapi_gql_mcp.depth_guard import parse_guarded
 from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
+from fastapi_gql_mcp.recursive_expand import (
+    UNROLL_LIMIT as _RECURSIVE_UNROLL_LIMIT,
+)
+from fastapi_gql_mcp.recursive_expand import (
+    expand_recursive_chains,
+    recursive_edges,
+)
 from fastapi_gql_mcp.scanner import (
     ReadinessReport,
     RouteInfo,
@@ -108,6 +115,11 @@ class RouterGraphQLHandler:
         self._schema = self._builder.build()
         self._routes: list[RouteInfo] = routes
         self._skips: list[SkipRecord] = skips
+        # Recursive-chain unrolling (see recursive_expand): direct
+        # self-reference edges, detected once from the built schema. The
+        # route already computed the full tree — unrolling merely removes
+        # the document-depth limitation so agents receive true depth.
+        self._recursive_edges = recursive_edges(self._schema)
 
     @property
     def schema(self) -> GraphQLSchema:
@@ -243,6 +255,16 @@ class RouterGraphQLHandler:
                 document = parse(query)
             except GraphQLError as exc:
                 return None, (exc,)
+        # True-depth recursion: the guard above ran on the AGENT's document
+        # (expansion must not become a runaway bypass); unrolling afterwards
+        # is a system behavior, so the expanded document skips the guard.
+        if self._recursive_edges:
+            document = expand_recursive_chains(
+                document,
+                self._schema,
+                self._recursive_edges,
+                _RECURSIVE_UNROLL_LIMIT,
+            )
         # Custom rules EXTEND the standard set (replacing it would silently
         # drop field/type checking for anyone passing a rule).
         rules = (*specified_rules, *self._validation_rules)
