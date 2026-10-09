@@ -132,6 +132,9 @@ def auth_app() -> FastAPI:
     return app
 
 
+WHOAMI_QUERY = "{ iam { whoami { user } } }"
+
+
 def big_app(n: int = 30) -> FastAPI:
     """App with ``n`` distinct GET routes, for progressive-threshold tests.
 

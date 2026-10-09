@@ -8,6 +8,7 @@ from fastmcp import Client
 from pydantic import BaseModel
 
 from fastapi_gql_mcp import FastAPIMCP
+from tests.support.apps import users_app
 from tests.support.mcp import tool_payload
 
 
@@ -168,3 +169,14 @@ class TestExecutionNotScoped:
                 )
             )
         assert result["data"]["data"]["iam"]["users"]["create_user"]["id"] == 9
+
+
+class TestToolAnnotations:
+    async def test_progressive_mode_hints(self):
+        mcp = FastAPIMCP(
+            users_app(), name="prog", mode="progressive", allow_mutation=True
+        )
+        async with Client(mcp.mcp) as client:
+            tools = {t.name: t for t in await client.list_tools()}
+        assert tools["list_domains"].annotations.read_only_hint is True
+        assert tools["graphql_mutation"].annotations.destructive_hint is True
