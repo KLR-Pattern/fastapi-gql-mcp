@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Test suite reorganized into layers.** `tests/` now mirrors altitude
+  instead of git history: `unit/` (one module under test, no handler
+  execution), `integration/` (through `RouterGraphQLHandler`),
+  `e2e/` (ASGI / fastmcp Client), `guards/` (meta pins), plus a shared
+  `tests/support/` package (sample models, app factories, MCP/HTTP
+  protocol helpers) that replaces ~19 copy-pasted factories and
+  per-file model redefinitions. A `make_handler` conftest fixture owns
+  handler lifecycle. Four assertion-level duplicates merged
+  (filter_passthrough_headers ×2, introspection, list-type, path-param
+  restatement); layered assertions deliberately kept. Ticket-wave labels
+  (G5-G11/H1/M1, P0-2, R1/R4, B1, O1/O2, D1) moved from names and
+  section markers into docstrings.
+
+### Added
+
+- **Seventeen gap tests** lift coverage from 95.1% to 96.7%:
+  unknown-domain errors for the remaining progressive tools, fragment
+  arms of the unroll-limit walk, HEAD/OPTIONS-only routes, empty
+  TypedDict/dataclass input raises, output-side AliasChoices fallback,
+  input-side hyphenated TypedDict keys, dataclass field degradation on
+  both sides, non-JSON 2xx bodies, long error-body truncation, and
+  syntax errors on the unguarded parse path.
+
 ## 0.11.0 (2026-10-09)
 
 ### Added
@@ -436,7 +463,7 @@
   route spans, one MCP query now lands as
   `tools/call > graphql.execute > GET /route` in a single trace (previously
   the route spans were orphan traces). Regression-locked by
-  `tests/test_otel_propagation.py`; walkthrough in
+  `tests/e2e/test_otel_propagation.py`; walkthrough in
   `examples/otel_smoke.md`.
 
 - **`max_depth` (default 10, `None` disables)** on
@@ -536,7 +563,7 @@
   MCP OAuth 2.1 login (Claude Code) as three interchangeable credential
   carriers, with the fastmcp GitHub proxy reusing the app's OAuth callback
   via a redirect subdirectory (`auth_at_root`). Guarded by
-  `tests/test_example_public_api.py`: examples import the public API only.
+  `tests/guards/test_example_public_api.py`: examples import the public API only.
 
 ### Fixed
 

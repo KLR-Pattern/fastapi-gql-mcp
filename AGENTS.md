@@ -23,7 +23,7 @@ changes you are shipping.
    single source of truth. (0.5.0 shipped with a hardcoded `__version__`
    still at 0.4.0 — the published package reported the wrong runtime
    version; deriving removed that release step entirely.)
-   `tests/test_version.py` fails the suite if `__version__` and pyproject
+   `tests/guards/test_version.py` fails the suite if `__version__` and pyproject
    ever disagree again.
 
    Verify before committing:
@@ -76,13 +76,21 @@ changes you are shipping.
 
 - **Release only from `master`.** Feature branches merge (fast-forward when
   linear) before any version bump.
+- **Test suite layers.** `tests/unit/` pins one module without handler
+  execution, `tests/integration/` goes through `RouterGraphQLHandler`,
+  `tests/e2e/` drives ASGI / fastmcp clients, `tests/guards/` holds meta
+  pins. Shared sample models, app factories, and protocol helpers live in
+  `tests/support/` — import via `from tests.support import apps, models`
+  (every directory keeps an `__init__.py`). New tests go where their
+  SUBJECT lives, not where the ticket came from; wave/ticket IDs belong in
+  docstrings, never in test names.
 - **The tag is the trigger.** Pushing the tag publishes to PyPI — a broken
   release cannot be unpublished, only superseded by the next version. Never
   move or delete a published tag.
 - **PyPI token**: `PYPI_PUBLISHER` in repo secrets. First release of a new
   project name needs an account-wide token; afterwards rotate to a
   project-scoped one. Also claim the project on PyPI after first publish.
-- **`__version__` consistency** is enforced by `tests/test_version.py`
+- **`__version__` consistency** is enforced by `tests/guards/test_version.py`
   (derived from package metadata; pyproject is the single source) — the
   wheel's runtime string must match the tag.
 - **CHANGELOG discipline**: entries land in Unreleased as they ship, not in
@@ -92,7 +100,8 @@ changes you are shipping.
   `chore(release):`); CHANGELOG hunks split into the commit they describe
   when a release groups several commits.
 - **Coverage gate**: CI runs pytest with `--cov-fail-under=95` (baseline
-  95.7%); local `uv run pytest` stays ungated for fast partial runs.
+  96.7% after the layered-suite refactor); local `uv run pytest` stays
+  ungated for fast partial runs.
 - **Locks**: the repo-root `uv.lock` is committed; `examples/*` and
   `comparison/bench/*` locks are ignored (they carry local path sources).
 - **Known trap**: port 8020 — check `lsof -nP -iTCP:8020 -sTCP:LISTEN`
