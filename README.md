@@ -56,6 +56,7 @@ agents get:
   means "the whole subtree": one level of `children` selection returns the
   tree at its true depth (the route already computed it; there is no
   invisible truncation), with your selection shape repeating per level
+  (up to the unroll limit — see *Rules worth knowing*)
 
 ### Compared to the alternatives
 
@@ -149,7 +150,8 @@ Rules worth knowing:
   operations in separate domains or send separate mutation documents.
 - **Recursive models return their true depth.** Selecting a recursive
   field means "the whole subtree": the selection shape where you stop
-  repeats to whatever depth the data has — the route already computed the
+  repeats to whatever depth the data has, up to the unroll limit (next
+  paragraph) — the route already computed the
   full tree, and the bridge hands it over complete instead of truncating
   at the document's depth (truncation there was invisible: `children: []`
   on a leaf is indistinguishable from a cut-off subtree). `max_depth`
@@ -157,6 +159,19 @@ Rules worth knowing:
   at every depth. The recursive type's schema description states this
   contract in one line per type, so agents discover it from the SDL
   itself.
+- **The unroll limit, and what happens past it.** Unrolling is bounded by
+  the process recursion budget: `sys.getrecursionlimit() // 16` levels
+  (~62 under the default 1000 frames — measured at ~12 frames per served
+  level, the bound keeps the deepest walk well inside the budget). Data
+  no deeper than the limit returns in full and untouched; deeper data is
+  served as deep as the document goes with a DEFINITE error naming the
+  limit and the way out (`sys.setrecursionlimit` — a raised budget serves
+  deeper trees on NEW handlers; an existing one reports the error rather
+  than silently truncating against its baked-in documents). Boundaries:
+  mutual recursion (`A.b: B`, `B.a: A`) and fragment-carrying templates
+  are consciously left at the written depth — only direct self-reference
+  (`Node.children: [Node]`) unrolls, whatever model kind carries it
+  (BaseModel, TypedDict, dataclass).
 - **Dynamic shapes pass through as `JSON`** — `dict`/`Any` annotations bridge
   as the `JSON` scalar in both directions (a `JSON` argument lands as the raw
   request body); untyped routes, serialization-filtered responses, unions and
