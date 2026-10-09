@@ -146,7 +146,9 @@ Rules worth knowing:
   at the document's depth (truncation there was invisible: `children: []`
   on a leaf is indistinguishable from a cut-off subtree). `max_depth`
   still guards the document you write; per-level field filtering applies
-  at every depth.
+  at every depth. The recursive type's schema description states this
+  contract once per type, so agents discover it from the SDL itself. The recursive field's schema description carries this
+  contract, so agents learn it from the SDL itself.
 - **Dynamic shapes pass through as `JSON`** — `dict`/`Any` annotations bridge
   as the `JSON` scalar in both directions (a `JSON` argument lands as the raw
   request body); untyped routes, serialization-filtered responses and unions

@@ -259,6 +259,13 @@ def _materialize_str_args(annotation: Any) -> Any:
         return annotation
 
 
+def _unwrap_output_type(field_type: Any) -> Any:
+    """Strip NonNull/List wrappers — mirrors recursive_expand's edge test."""
+    while isinstance(field_type, (GraphQLNonNull, GraphQLList)):
+        field_type = field_type.of_type
+    return field_type
+
+
 def _model_namespace(model: type[BaseModel]) -> dict[str, Any]:
     """The namespace a model's ForwardRefs evaluate against: the model's own
     name (self-references — the enclosing scope binds the class name only
@@ -403,7 +410,21 @@ class TypeBuilder:
         # raise UnsupportedFieldTypeError here — graphql-core's lazy `.fields`
         # would otherwise swallow it into a generic TypeError at schema time.
         self._object_types[model] = obj
-        self._output_fields_cached(model)
+        fields = self._output_fields_cached(model)
+        # Direct self-reference edge (same predicate recursive_expand applies
+        # to the finished schema)? Then the type-level description carries the
+        # true-depth contract ONCE — not one copy per recursive field.
+        if any(_unwrap_output_type(f.type) is obj for f in fields.values()):
+            # One line, token-priced: local placement beats full contract
+            # text (the README carries the details) — N recursive types
+            # cost N x ~15 tokens instead of N paragraphs.
+            note = (
+                "Recursive type: full subtree at true depth; "
+                "your selection repeats per level."
+            )
+            obj.description = (
+                f"{obj.description}\n\n{note}" if obj.description else note
+            )
         return obj
 
     def _output_fields_cached(self, model: type[BaseModel]) -> dict[str, GraphQLField]:

@@ -183,3 +183,28 @@ class TestBoundaries:
         result = await handler.execute("{ t { pair { name b { tag } } } }")
         assert "errors" not in result, result
         assert result["data"]["t"]["pair"]["b"] == {"tag": "y"}
+
+
+class TestSchemaNote:
+    async def test_contract_note_once_per_type_not_per_field(self):
+        """The true-depth contract rides the recursive TYPE's description —
+        one copy however many self-referencing fields the type carries (the
+        SDL is token-priced; per-field copies would be redundant), placed
+        where agents read the field list they select into."""
+        class Family(BaseModel):  # two self-referencing fields on one type
+            name: str
+            siblings: list["Family"] = []
+            cousins: list["Family"] = []
+
+        Family.model_rebuild()
+        app = FastAPI()
+
+        @app.get("/family", response_model=Family, tags=["t"])
+        async def family():
+            return Family(name="x", siblings=[], cousins=[])
+
+        handler = RouterGraphQLHandler(app)
+        sdl = handler.get_sdl()
+        assert sdl.count("full subtree at true depth") == 1  # once per type
+        assert sdl.count("repeats per level") == 1
+        assert "siblings: [Family!]" in sdl and "cousins: [Family!]" in sdl

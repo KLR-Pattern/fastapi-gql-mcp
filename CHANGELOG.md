@@ -15,7 +15,12 @@
   resolution is pure projection), so unrolling merely removes the document
   limitation. `max_depth` still guards the document as written; fragments
   in a recursive template and mutual recursion (A.b: B / B.a: A) are
-  consciously left unexpanded.
+  consciously left unexpanded. The recursive type's schema description
+  carries a one-line contract ("full subtree at true depth; your
+  selection repeats per level") once per type — local placement at
+  ~15 tokens instead of per-field paragraphs. The recursive field's schema description
+  states the contract ("complete subtree at true depth; your selection is
+  the repeating template"), so agents discover it from the SDL.
 
 - **`instructions=` passthrough on `FastAPIMCP`** — the MCP protocol's
   handshake usage guide, injected into the agent's context once per
