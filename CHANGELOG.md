@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Docs
+
+- **Capability boundaries rewritten as the full input/output matrix**:
+  a structured-inputs table (path convertors, query models, body shapes,
+  Depends, scalars, alias wire contract), two new degradation rows (unbound
+  TypeVar at a route boundary, unannotated body parameters), mixed-type
+  Literal in the skip list, and a "Conventions the bridge follows" table
+  collecting the FastAPI-side derivation rules (tags/domains, function
+  names, descriptions, requiredness per model family, exclude/deprecated,
+  optional headers, multi-verb priority, naming collisions).
+
 ### Fixed
 
 - **TypeVar-degraded routes now carry the real reason in their SDL note.**

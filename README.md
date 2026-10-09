@@ -138,7 +138,8 @@ The shape follows two rules:
   `list_products`, your own vocabulary with no URL reconstruction. Two routes
   sharing a function name fail fast with `DuplicateFieldError`.
 
-Rules worth knowing:
+<details>
+<summary><b>Rules worth knowing</b> — mutation gating &amp; ordering, recursive true-depth, the unroll limit, route filters, tag semantics</summary>
 
 - **Mutations are off by default** (`allow_mutation=True` to expose writes;
   `mutation_include=[...]` globs to whitelist specific write routes);
@@ -197,19 +198,39 @@ Rules worth knowing:
   docstrings (or `summary=`) → field descriptions,
   `Query()/Path()/Body(description=...)` → argument descriptions. They surface
   in GraphiQL hover, introspection and every MCP discovery tool.
+</details>
 
 ## Capability boundaries
 
 The bridging promise: **if a route works over HTTP, it stays callable here.**
-Every route lands in one of four buckets.
+Every route lands in one of four buckets — classified once at scan time, so
+the SDL field note, the startup warning, and `readiness()` always tell the
+same story.
 
 ### Structured — the default
 
-A typed `response_model` (or return annotation) over Pydantic models becomes
-a selectable GraphQL type: `{ id name }`, nested models, `TypedDict`s, stdlib
+**Inputs** — every argument shape FastAPI validates maps to a GraphQL
+argument:
+
+| Your parameter | In the schema |
+|---|---|
+| path param, any Starlette convertor (`{id:int}`, `{p:path}`, unicode segments) | required argument; the URL is rendered by Starlette itself, so convertor syntax survives |
+| query param (`Query()`, defaults, `Optional`) | optional argument carrying its default; unset optional params are simply not sent |
+| a lone `Annotated[FilterModel, Query()]` | flattens into one argument per model field, alias-aware |
+| single body: `BaseModel` / `TypedDict` / `@dataclass` / `dict` / scalar / list | the whole JSON body as one argument |
+| multiple body params | embedded keys — FastAPI's own `embed` rule, reproduced verbatim |
+| `Depends(...)` sub-parameters | merged into the flattened argument view |
+| enums, `Literal` of one scalar type | Enum type / scalar argument with an allowed-values description |
+| `UUID`, `Decimal`, datetime/date/time | custom scalars (string-wire), round-tripped |
+| aliases (`validation_alias`/`alias`, `AliasChoices`) | one canonical wire key (the first string choice); illegal-identifier names are sanitized for GraphQL and translated back to the wire key at call time |
+
+**Outputs** — a typed `response_model` (or return annotation) becomes a
+selectable GraphQL type: `{ id name }`, nested models, `TypedDict`s, stdlib
 `@dataclass`es, lists and sets, enums, `Literal`s (enum members normalize to
 their values), custom scalars (`UUID`, `Decimal`, datetime…), generics
-(`Page[Item]`), aliases.
+(`Page[Item]`), constrained/bound TypeVars (they normalize to their
+constraint/bound), recursive models (true depth — see above), and output
+aliases (`serialization_alias` first, then `alias`).
 
 ### Raw JSON fallback — still callable, just not field-selectable
 
@@ -221,11 +242,13 @@ their values), custom scalars (`UUID`, `Decimal`, datetime…), generics
 | returns a union (`Item \| Error`) | the union bridges as `JSON`; nested inside a model, only that field degrades |
 | a model field no GraphQL type can express (`metadata: SomeCustomClass`) | only that field bridges as `JSON` — the model keeps its structured fields; `readiness().degraded_fields` names it |
 | takes a union parameter (`value: A \| B`) | the argument bridges as `JSON`; FastAPI validates whichever member arrives (a 422 surfaces as a field error) |
+| an **unbound TypeVar** at a route boundary (`def get() -> BareT`) | the route degrades to `JSON` with parameterize guidance in the SDL note and the report — still callable and audited |
+| an unannotated body parameter (`payload = Body(...)`) | bridges as a required `JSON` argument |
 
-Every fallback names its cause in the field description **and** in a startup
-warning (`bridged N route(s) as raw JSON …`) that says how to get field
-selection back. `response_model_exclude_none` stays structured — it only
-drops keys that are nullable anyway.
+`response_model_exclude_none` stays structured — it only drops keys that are
+nullable anyway. Every fallback names its cause in the field description
+**and** in a startup warning (`bridged N route(s) as raw JSON …`) that says
+how to get field selection back.
 
 ### Boolean success — `-> None` routes
 
@@ -246,17 +269,45 @@ exposes them (`path`, `method`, `reason`) for CI assertions, and
 | write verbs with `allow_mutation=False` (the default) | opt in with `allow_mutation=True` or `mutation_include` |
 | hidden route (`include_in_schema=False`) | opt in with `include_hidden=True` |
 | returns a raw `Response` (streaming, plain text) | no typed body to expose |
-| response/parameter annotation with no mapping at all (`-> bytes`, a bare custom class) | no per-field shape exists to degrade to — annotate with a JSON-compatible type |
+| response/parameter annotation with no mapping at all (`-> bytes`, a bare custom class, mixed-type `Literal`) | no per-field shape exists to degrade to — annotate with a JSON-compatible type |
 
 `include`/`exclude` globs — and `include_tags`/`exclude_tags` — also remove
 routes by configuration; that is filtering you asked for, not a skip.
+
+<details>
+<summary><b>Conventions the bridge follows (and expects)</b> — the FastAPI-side derivation rules: tags/domains, function names, descriptions, requiredness per model family, exclude/deprecated, multi-verb, naming collisions</summary>
+
+*Derive, don't decorate* — your existing code is the contract. These are the
+rules it is read by; none of them require changes, but knowing them makes
+the schema predictable:
+
+| In your code | The bridge's rule |
+|---|---|
+| `tags=["shop:catalog"]` | the domain tree: `shop { catalog { … } }`; `:` nests. Untagged routes join the domain of their first path segment; non-string (Enum) tags are ignored for grouping |
+| endpoint function name | the GraphQL field name, your vocabulary verbatim; two same-named functions in one domain fail fast (`DuplicateFieldError`) |
+| docstrings & `description=` | model docstring → type description; `Field(description=)` → field description; endpoint docstring or `summary=` → field description; `Query()/Path()/Body(description=)` → argument description |
+| `deprecated=True` | GraphQL-native `@deprecated` — hidden from plain introspection, still executable; `exclude_deprecated=True` drops the route instead |
+| requiredness | BaseModel fields: pydantic's `is_required()`; TypedDicts: the required-key set; dataclasses: no `default` and no `default_factory`. A dataclass factory default carries no GraphQL default — calling the factory at build time would be a side effect |
+| `Field(exclude=True)` | never a GraphQL **output** field (it never serializes) but still a valid **input** field — exclude is serialization-only |
+| optional `Header()` / `Cookie()` params | never GraphQL arguments: optional ones are simply not sent, REQUIRED ones skip the route — credentials ride `passthrough_headers`, not arguments |
+| `@app.api_route(methods=["GET", "POST"])` | the first verb in GET/POST/PUT/PATCH/DELETE priority wins; the dropped verbs are warned about |
+| sync `def` endpoints | run through Starlette's anyio threadpool — transparent to the bridge |
+| `BackgroundTasks` / `Request` / `Response` params | FastAPI injections, ignored as arguments; the route stays fully functional |
+| same-named model classes from different modules | qualified type names (`Item_mymod`), with a warning |
+| enum member names | must be legal GraphQL identifiers (letters/digits/`_`, not digit-first) |
+| `Literal` member types | one scalar family per Literal — `str`/`int`/`bool`; mixed-type or float members cannot map and skip the route |
+</details>
 
 ### Readiness checklist
 
 The same audit the startup notices come from is callable as data — which
 routes the bridge would skip, which it would degrade to raw JSON, and which
 model fields would degrade. One classifier backs both, so the report and
-the warnings can never drift apart.
+the warnings can never drift apart. Pass the same filters your deployment
+uses, and `assert report.ready` in CI to pin the exposure you expect.
+
+<details>
+<summary><b>readiness() report shape</b></summary>
 
 ```python
 # standalone: scan + classify only — no schema build, no MCP server
@@ -271,9 +322,7 @@ report.degraded_fields  # tuple[(Model.field, reason), ...] — unions and unmap
 # or over an already-built deployment (stored scan results, no re-scan)
 mcp.handler.readiness()
 ```
-
-Pass the same filters your deployment uses, and `assert report.ready` in CI
-to pin the exposure you expect.
+</details>
 
 ## Installation
 
@@ -325,7 +374,8 @@ mcp = FastAPIMCP(
 )
 ```
 
-Writing it well:
+<details>
+<summary><b>Writing <code>instructions</code> well</b></summary>
 
 - **Lead with the domain map** — the same names your `tags` produce, so
   the agent can aim `graphql_query` without reading the whole SDL first.
@@ -336,6 +386,7 @@ Writing it well:
   session; the SDL (via `get_schema`) already carries the details.
 - Progressive mode profits most: a domain map in `instructions` lets the
   agent skip `list_domains` and go straight to `list_queries("iam")`.
+</details>
 
 ### Progressive disclosure (large apps)
 
@@ -361,7 +412,10 @@ mcp.mount_to(app, "/mcp")            # streamable HTTP at /mcp/
 mcp.handler.mount_graphql(app)       # GraphiQL at /graphiql + POST /graphql
 ```
 
-**Multi-worker deployments**: streamable HTTP sessions are stateful and live
+<details>
+<summary><b>Multi-worker deployments</b> — sticky sessions or stateless mode</summary>
+
+Streamable HTTP sessions are stateful and live
 in one process — behind several workers or pods, either pin the MCP path to
 one worker / use sticky routing, or mount stateless:
 
@@ -373,6 +427,7 @@ mcp.run(stateless_http=True)                    # same flag on run()
 Stateless mode runs one transport per request: it survives any load
 balancer, at the cost of per-request session setup. `/graphql` (plain
 GraphQL face) is stateless already.
+</details>
 
 ### Multiple MCP deployments over one app
 
@@ -380,12 +435,16 @@ Different MCP consumers often need different slices of the same app. Build
 one `FastAPIMCP` per use case, each scoped by its own tag filter, and mount
 each at its own path — the instances share nothing but the wrapped app:
 
+<details>
+<summary><b>Example</b></summary>
+
 ```python
 iam = FastAPIMCP(app, name="iam-api", include_tags=["iam:*"])
 billing = FastAPIMCP(app, name="billing-api", include_tags=["billing:*"])
 iam.mount_to(app, "/mcp-iam")        # streamable HTTP at /mcp-iam/
 billing.mount_to(app, "/mcp-billing")
 ```
+</details>
 
 ### Plain GraphQL (no MCP)
 
@@ -423,6 +482,9 @@ verifiers, and this bridge never holds or manages tokens of its own.
   they never become GraphQL arguments. The `POST /graphql` face (and
   GraphiQL) share the same whitelist, so browser sessions flow through it
   the same way. Wired example: [examples/notes_oauth](./examples/notes_oauth/).
+<details>
+<summary><b>No-credential behavior, machine callers, and MCP endpoint OAuth</b></summary>
+
 - **Without credentials, protected routes fail** — field errors like
   `HTTP_401` in query results; nothing falls back to a server-side identity.
 - **Machines without a user context** configure the service credential on the
@@ -437,6 +499,7 @@ verifiers, and this bridge never holds or manages tokens of its own.
   the OAuth routes at the app root (for reusing an IdP app whose registered
   callback lives there). The bridge itself still verifies nothing. Full
   wired flow: [examples/notes_oauth](./examples/notes_oauth/).
+</details>
 
 Expose the MCP endpoint only behind an entrance you control (network, or a
 FastAPI `Depends` on the mounted route) — the bridge authenticates no one
@@ -445,9 +508,14 @@ writes out of reach.
 
 ## Observability (OpenTelemetry)
 
-Install an OpenTelemetry SDK next to your app — that's the whole setup. The
-spans are emitted natively from both ends, and the bridge stitches them into
-one waterfall:
+Install an OpenTelemetry SDK next to your app — that's the whole setup. One
+waterfall per query: fastmcp emits the tool span, the bridge emits
+`graphql.execute` and injects W3C `traceparent` into every in-process route
+call, and FastAPI >= 0.142 nests its route spans under it. Timeouts and
+queue waits surface as span events.
+
+<details>
+<summary><b>The span levels, and where to look</b></summary>
 
 - **fastmcp** emits the tool level (`tools/call graphql_query`);
 - the bridge emits `graphql.execute` (the GraphQL orchestration layer) and
@@ -465,6 +533,7 @@ Route-call timeouts and concurrency queue waits surface as span events
 a live wired app: [examples/notes_oauth](./examples/notes_oauth) (env-gated
 `app/observability.py`). Metrics (per-URL QPS/p99) are out of scope here —
 derive them from spans with an OTel Collector `spanmetrics` connector.
+</details>
 
 ## Hardening the bridge
 
@@ -493,9 +562,10 @@ All four are parameters of `RouterGraphQLHandler` and `FastAPIMCP`. For
 anything policy-shaped, `validation_rules=` on the handler passes extra
 graphql-core validation rules through (they extend the standard set).
 
-For rate limiting and response caps on the **MCP face**, FastMCP's
-middleware suite attaches with zero bridge code — `FastAPIMCP.mcp` is the
-underlying `FastMCP` instance:
+<details>
+<summary><b>Rate limiting &amp; response caps on the MCP face</b> (FastMCP middleware, zero bridge code)</summary>
+
+`FastAPIMCP.mcp` is the underlying `FastMCP` instance:
 
 ```python
 from fastmcp.server.middleware.rate_limiting import RateLimitingMiddleware
@@ -512,24 +582,28 @@ bucket); `ResponseLimitingMiddleware` truncates oversized tool responses
 (default 1 MB, configurable suffix). The `POST /graphql` face does not go
 through fastmcp — attach your own middleware to the host app for that
 endpoint.
+</details>
 
 ## Demo
 
-[`examples/shop`](./examples/shop/) runs a small shop app (users / catalog /
-orders / stats, auth via `x-token: demo-secret`) with every feature in play —
-including **full documentation coverage** so all four description chains are
-inspectable in GraphiQL:
+[`examples/shop`](./examples/shop/) — a small shop app (users / catalog /
+orders / stats, auth via `x-token: demo-secret`) with every feature in play:
 
 ```bash
 uv run --extra mcp python -m examples.shop                     # REST + /mcp/ + /graphiql + /graphql on :8010
 uv run --extra mcp python -m examples.shop.mcp_walkthrough     # agent's-eye MCP walkthrough, no client needed
 ```
 
+<details>
+<summary><b>What to look for in the demo</b></summary>
+
 `python -m examples.shop` prints all endpoint URLs and serves the grouped
 schema; `/now` is untyped on purpose so the skip warning is visible at startup.
 `GET /categories` is the recursive showcase — `CategoryOut.children` is
 self-referencing, so over MCP one level of `children` selection returns the
-whole tree (the type's schema description states the contract).
+whole tree (the type's schema description states the contract). Full
+**documentation coverage** means all four description chains are inspectable
+in GraphiQL.
 
 For the full consumer experience — a real app with **GitHub OAuth login,
 session cookies, and MCP OAuth (Claude Code's browser login flow)** — see
@@ -538,6 +612,7 @@ credential carriers resolved in one place, the MCP endpoint protected by
 an OAuth 2.1 proxy, and a smoke script that walks the protected paths
 headlessly. For observability, [examples/otel_smoke.md](./examples/otel_smoke.md)
 walks the one-waterfall-per-query proof in Jaeger.
+</details>
 
 ## Development
 
