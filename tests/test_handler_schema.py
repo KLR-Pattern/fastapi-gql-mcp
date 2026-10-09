@@ -417,7 +417,8 @@ class TestUnionFallback:
     route — with FIELD-level granularity: only the union part degrades,
     the surrounding model stays selectable. A real GraphQLUnionType with
     resolve_type remains a future upgrade; JSON never blocks it. Input-side
-    (request body) unions still skip: GraphQL has no input unions."""
+    unions bridge as the JSON scalar too, symmetric with the output side —
+    FastAPI validates whichever member arrives (issue #3, case 4)."""
 
     class Err(BaseModel):
         code: int
@@ -492,8 +493,10 @@ class TestUnionFallback:
 
         assert render_type(TypeBuilder().output_type(int | str | None)) == "JSON"
 
-    def test_input_side_union_still_unsupported(self):
-        """Request-body unions keep skipping: GraphQL has no input unions."""
+    def test_input_side_union_bridges_as_json(self):
+        """Request-body unions bridge as the JSON scalar, symmetric with the
+        output side: the agent sends either member's JSON and FastAPI's
+        validation decides (422 -> field error)."""
         app = FastAPI()
 
         @app.post("/u", tags=["u"])
@@ -501,8 +504,8 @@ class TestUnionFallback:
             return {"ok": True}
 
         routes, skips = RouterScanner(app, allow_mutation=True).scan()
-        assert routes == []
-        assert any("Cannot map" in s.reason for s in skips)
+        assert len(routes) == 1
+        assert skips == []
 
 
 def render_type(t) -> str:

@@ -36,6 +36,7 @@ from fastapi_gql_mcp.scalars import GraphQLJSON
 from fastapi_gql_mcp.scanner import ParamInfo, RouteInfo
 from fastapi_gql_mcp.type_builder import (
     TypeBuilder,
+    describe_literal_values,
     union_member_names,
     union_members,
 )
@@ -146,6 +147,11 @@ def _leaf_field(
             ),
         )
     notes: list[str] = []
+    # Route-level Literals get the same allowed-values note model fields
+    # carry (_field_description) — the route field is where agents read it.
+    literal_note = describe_literal_values(route.response_annotation)
+    if literal_note:
+        notes.append(literal_note)
     if route.response_filter:
         # Serialization filters (exclude_unset/include/...) reshape the JSON
         # after validation, so per-field promises cannot hold: bridge the

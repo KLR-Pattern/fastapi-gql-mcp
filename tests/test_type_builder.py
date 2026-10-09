@@ -224,7 +224,7 @@ class TestObjects:
 
     def test_unsupported_type_raises(self):
         with pytest.raises(UnsupportedFieldTypeError):
-            TypeBuilder().output_type(set[int])  # no scalar for sets
+            TypeBuilder().output_type(bytes)  # no GraphQL scalar for bytes
 
     def test_dict_maps_to_json_scalar(self):
         from fastapi_gql_mcp.scalars import GraphQLJSON
@@ -234,13 +234,20 @@ class TestObjects:
         assert builder.bare_output_type(dict) is GraphQLJSON
         assert builder.input_type(dict[str, Any]) is GraphQLJSON
 
-    def test_unsupported_nested_field_reports_path(self):
+    def test_unsupported_nested_field_degrades_with_path(self):
+        """Field-level fallback: the bad field bridges as JSON, the path and
+        reason land in degraded_fields (the whole-route raise is gone)."""
         class Bad(BaseModel):
             ok: int
-            payload: set[int]  # no scalar for sets
+            payload: bytes  # no GraphQL scalar for bytes
 
-        with pytest.raises(UnsupportedFieldTypeError, match=r"Bad\.payload"):
-            TypeBuilder().output_type(Bad)
+        builder = TypeBuilder()
+        fields = builder.output_type(Bad).of_type.fields
+        assert str(fields["payload"].type) == "JSON!"
+        assert "bytes has no GraphQL mapping" in (fields["payload"].description or "")
+        assert builder.degraded_fields == [
+            ("Bad.payload", "bytes has no GraphQL mapping")
+        ]
 
     def test_model_without_fields_raises(self):
         class Empty(BaseModel):
