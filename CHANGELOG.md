@@ -2,7 +2,34 @@
 
 ## Unreleased
 
+### Fixed
+
+- **TypeVar-degraded routes now carry the real reason in their SDL note.**
+  Route-output classification runs ONCE at scan time
+  (`scanner.OutputPlan`) and every reader — startup notice, readiness
+  report, SDL field note — consumes the same plan, ending five verified
+  disagreements between the three former detectors: the misleading
+  "declares no response type" guidance on generic routes, first-match
+  audit vs stacked SDL notes, void+filter audited as degraded (a bodyless
+  response has nothing to filter), Any+filter showing two different
+  stories, and the filter⇒JSON decision smeared across four sites.
+
 ### Changed
+
+- **Input/output handling systematically reorganized** (four refactors,
+  zero behavior change beyond the fix above):
+  - type_builder's six near-clone field builders (model/TypedDict/
+    dataclass × input/output) unified on `FieldSpec`: three family
+    extractors produce normalized field records, one `_build_fields`
+    loop owns sanitize/wire-key/degrade/union/empty handling that was
+    copy-pasted six times (1052 → 1041 lines while gaining the
+    abstraction)
+  - `_build_route_info` (158 lines) decomposed into a gate sequence
+    (`_FlatParams`, five named gates, `_route_params`, `_trial_route_types`)
+    with `_make_param` as the single ParamInfo/gname producer
+  - wire-name/default/note helpers single-sourced (`request_wire_name`,
+    `output_wire_name`, `graphql_default`, `append_note`); all three
+    cross-module private imports made public or moved home
 
 - **Test suite reorganized into layers.** `tests/` now mirrors altitude
   instead of git history: `unit/` (one module under test, no handler

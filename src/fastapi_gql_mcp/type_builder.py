@@ -33,8 +33,8 @@ import logging
 import re
 import sys
 import types
-from collections.abc import Callable
-from dataclasses import MISSING, is_dataclass
+from collections.abc import Callable, Iterator
+from dataclasses import MISSING, dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
 from enum import Enum
 from typing import (
@@ -245,6 +245,98 @@ def graphql_default(default: Any) -> Any:
     if default is None or isinstance(default, str | int | float | bool):
         return default
     return Undefined
+
+
+@dataclass(frozen=True)
+class FieldSpec:
+    """One field of a composite (model / TypedDict / dataclass), family-normalized.
+
+    The six per-family field builders differed only in how they produce
+    these values; ``field_name`` and ``wire`` are distinct because the
+    degradation audit keys by the PYTHON field name while GraphQL names and
+    wire-key translation key by the alias.
+    """
+
+    field_name: str  # Python-side name: audit key ("Model.field"), error context
+    wire: str  # wire key FastAPI validates/serializes this field by
+    annotation: Any  # already resolved (resolve_annotation / _typeddict_hints)
+    description: str | None = None  # family description BEFORE degraded/union notes
+    required: bool = False  # input: NonNull argument iff True
+    default: Any = Undefined  # input: literal default or graphql Undefined
+    bare: bool = False  # output: nullable outer level (key may be absent)
+
+
+def _model_specs(model: type[BaseModel], *, input_side: bool) -> Iterator[FieldSpec]:
+    """BaseModel fields. Field(exclude=True) never serializes — building it
+    into the schema would promise a key the JSON never carries (selecting it
+    nulls the whole object); excluded fields stay valid INPUT fields, since
+    exclude is serialization-only and validation still reads them."""
+    ns = _model_namespace(model)
+    for field_name, info in model.model_fields.items():
+        if not input_side and info.exclude is True:
+            continue
+        annotation = resolve_annotation(info.annotation, ns)
+        yield FieldSpec(
+            field_name=field_name,
+            wire=request_wire_name(info, field_name)
+            if input_side
+            else output_wire_name(info, field_name),
+            annotation=annotation,
+            description=_field_description(info, annotation),
+            required=bool(info.is_required()),
+            default=graphql_default(info.get_default(call_default_factory=False))
+            if input_side
+            else Undefined,
+        )
+
+
+def _typeddict_specs(td: Any, *, input_side: bool) -> Iterator[FieldSpec]:
+    """TypedDict fields: annotations from get_type_hints (no FieldInfo to
+    consult); nullability/requiredness from the required/optional key set —
+    an optional key may be ABSENT from the JSON, so its output field is
+    nullable even when its annotation is not Optional (no FastAPI
+    ``required`` flag exists on the input side: the key set IS the
+    requiredness)."""
+    required = td.__required_keys__
+    for field_name, annotation in _typeddict_hints(td).items():
+        yield FieldSpec(
+            field_name=field_name,
+            wire=field_name,
+            annotation=annotation,
+            description=describe_literal_values(annotation),
+            required=field_name in required,
+            bare=field_name not in required,
+        )
+
+
+def _dataclass_specs(dc: Any, *, input_side: bool) -> Iterator[FieldSpec]:
+    """Dataclass fields: annotations resolved like a TypedDict's
+    (``_typeddict_hints`` is the same job for any hints-bearing class;
+    ``dataclasses.fields()`` already excludes ClassVar and InitVar).
+    Output nullability follows the ANNOTATION — every dataclass field is
+    always present in a materialized instance (defaults fill in), so only
+    Optional makes it nullable. Input requiredness: no default and no
+    default_factory; a defaulted field carries its literal default
+    (factory-only defaults carry none — calling the factory at schema-build
+    time would be a side effect; FastAPI materializes it when the argument
+    is absent, and a 422 surfaces as a field error)."""
+    hints = _typeddict_hints(dc)
+    for f in dataclass_fields(dc):
+        required = f.default is MISSING and f.default_factory is MISSING
+        annotation = hints.get(f.name, f.type)
+        yield FieldSpec(
+            field_name=f.name,
+            wire=f.name,
+            annotation=annotation,
+            description=describe_literal_values(annotation),
+            required=required,
+            default=(
+                graphql_default(f.default)
+                if input_side and not required and f.default is not MISSING
+                else Undefined
+            ),
+            bare=is_optional_annotation(annotation),
+        )
 
 
 def sanitize_graphql_name(name: str, *, what: str = "name") -> str:
@@ -704,46 +796,64 @@ class TypeBuilder:
         except UnsupportedFieldTypeError as exc:
             return GraphQLJSON, _field_unmappable_reason(exc)
 
-    def _output_fields(self, model: type[BaseModel]) -> dict[str, GraphQLField]:
-        fields: dict[str, GraphQLField] = {}
-        ns = _model_namespace(model)
-        for field_name, info in model.model_fields.items():
-            # Field(exclude=True) never serializes — building it into the
-            # schema would promise a key the JSON never carries (selecting it
-            # nulls the whole object). Excluded fields stay valid INPUT
-            # fields: exclude is serialization-only, validation still reads
-            # them, so the input side keeps them.
-            if info.exclude is True:
-                continue
-            # FastAPI serializes responses by alias, so GraphQL field names must
-            # match the JSON keys the resolver will actually see.
-            json_name = output_wire_name(info, field_name)
-            gname = sanitize_graphql_name(json_name, what=f"{model.__name__} field")
-            annotation = resolve_annotation(info.annotation, ns)
-            context = f"{model.__name__}.{field_name}"
-            gtype, degraded = self._degradable_output_type(annotation, context)
-            description = _field_description(info, annotation)
+    def _build_fields(
+        self, cls: Any, specs: Iterator[FieldSpec], *, input_side: bool
+    ) -> dict[str, Any]:
+        """The ONE field loop for every composite family: sanitize the wire
+        name into a GraphQL name, degrade-or-bridge the type, record the
+        degradation once, and shape the GraphQLField / GraphQLInputField.
+        The register-then-build shells call the family wrappers below."""
+        owner = cls.__name__
+        what = f"{owner} {'input field' if input_side else 'field'}"
+        fields: dict[str, Any] = {}
+        for spec in specs:
+            gname = sanitize_graphql_name(spec.wire, what=what)
+            context = f"{owner}.{spec.field_name}"
+            if input_side:
+                if gname != spec.wire:
+                    self._input_wire_map.setdefault(cls, {})[gname] = spec.wire
+                field_type, degraded = self._degradable_input_type(
+                    spec.annotation, context
+                )
+                gtype: Any = GraphQLNonNull(field_type) if spec.required else field_type
+            else:
+                gtype, degraded = self._degradable_output_type(
+                    spec.annotation, context, bare=spec.bare
+                )
+            description = spec.description
             if degraded is not None:
                 description = append_note(description, _degraded_field_note(degraded))
-                self._record_degraded(f"{model.__name__}.{field_name}", degraded)
-            elif (bridge := _union_json_bridge(annotation)) is not None:
+                self._record_degraded(context, degraded)
+            elif (bridge := _union_json_bridge(spec.annotation)) is not None:
                 reason, note = bridge
                 description = append_note(description, note)
-                # Surfaced by the scanner's startup log: the model's owner can
+                # Surfaced by the scanner's startup log: the owner can
                 # regain field selection by restructuring the union away.
-                self._record_degraded(f"{model.__name__}.{field_name}", reason)
-            if gname != json_name:
+                self._record_degraded(context, reason)
+            if input_side:
+                fields[gname] = GraphQLInputField(
+                    gtype, description=description, default_value=spec.default
+                )
+            elif gname != spec.wire:
+                # The GraphQL name is sanitized while FastAPI serializes by
+                # the wire key — the resolver closes that gap.
                 fields[gname] = GraphQLField(
-                    gtype,
-                    description=description,
-                    resolve=_wire_key_resolver(json_name),
+                    gtype, description=description, resolve=_wire_key_resolver(spec.wire)
                 )
             else:
                 fields[gname] = GraphQLField(gtype, description=description)
         if not fields:
-            reason = f"{model.__name__} has no usable fields"
-            raise UnsupportedFieldTypeError(model, reason, field_reason=reason)
+            reason = f"{owner} has no usable {'input ' if input_side else ''}fields"
+            raise UnsupportedFieldTypeError(cls, reason, field_reason=reason)
         return fields
+
+    def _output_fields(self, model: type[BaseModel]) -> dict[str, GraphQLField]:
+        return cast(
+            "dict[str, GraphQLField]",
+            self._build_fields(
+                model, _model_specs(model, input_side=False), input_side=False
+            ),
+        )
 
     # ----------------------------------------------------------------- input
 
@@ -855,108 +965,30 @@ class TypeBuilder:
         return obj
 
     def _input_fields(self, model: type[BaseModel]) -> dict[str, GraphQLInputField]:
-        fields: dict[str, GraphQLInputField] = {}
-        ns = _model_namespace(model)
-        for field_name, info in model.model_fields.items():
-            req_name = request_wire_name(info, field_name)
-            gname = sanitize_graphql_name(req_name, what=f"{model.__name__} input field")
-            if gname != req_name:
-                self._input_wire_map.setdefault(model, {})[gname] = req_name
-            annotation = resolve_annotation(info.annotation, ns)
-            field_type, degraded = self._degradable_input_type(
-                annotation, context=f"{model.__name__}.{field_name}"
-            )
-            gtype: GraphQLInputType = (
-                GraphQLNonNull(field_type) if info.is_required() else field_type
-            )
-            description = _field_description(info, annotation)
-            if degraded is not None:
-                description = append_note(description, _degraded_field_note(degraded))
-                self._record_degraded(f"{model.__name__}.{field_name}", degraded)
-            elif (bridge := _union_json_bridge(annotation)) is not None:
-                reason, note = bridge
-                description = append_note(description, note)
-                self._record_degraded(f"{model.__name__}.{field_name}", reason)
-            fields[gname] = GraphQLInputField(
-                gtype,
-                description=description,
-                default_value=graphql_default(
-                    info.get_default(call_default_factory=False)
-                ),
-            )
-        if not fields:
-            reason = f"{model.__name__} has no usable input fields"
-            raise UnsupportedFieldTypeError(model, reason, field_reason=reason)
-        return fields
+        return cast(
+            "dict[str, GraphQLInputField]",
+            self._build_fields(
+                model, _model_specs(model, input_side=True), input_side=True
+            ),
+        )
 
     # -------------------------------------------------------------- typeddict
 
     def _td_output_fields(self, td: Any) -> dict[str, GraphQLField]:
-        """TypedDict output fields: annotations from ``get_type_hints`` (no
-        FieldInfo to consult), nullability from the required/optional keys —
-        an optional key may be ABSENT from the JSON, so its field is
-        nullable even when its annotation is not Optional. ``td`` is Any:
-        the is_typeddict() guard at the dispatch site is the type proof
-        (plain ``type`` carries no __required_keys__ for mypy)."""
-        required = td.__required_keys__
-        fields: dict[str, GraphQLField] = {}
-        for field_name, annotation in _typeddict_hints(td).items():
-            gname = sanitize_graphql_name(field_name, what=f"{td.__name__} field")
-            context = f"{td.__name__}.{field_name}"
-            gtype, degraded = self._degradable_output_type(
-                annotation, context, bare=field_name not in required
-            )
-            description = describe_literal_values(annotation)
-            if degraded is not None:
-                description = append_note(description, _degraded_field_note(degraded))
-                self._record_degraded(f"{td.__name__}.{field_name}", degraded)
-            elif (bridge := _union_json_bridge(annotation)) is not None:
-                reason, note = bridge
-                description = append_note(description, note)
-                self._record_degraded(f"{td.__name__}.{field_name}", reason)
-            if gname != field_name:
-                fields[gname] = GraphQLField(
-                    gtype,
-                    description=description,
-                    resolve=_wire_key_resolver(field_name),
-                )
-            else:
-                fields[gname] = GraphQLField(gtype, description=description)
-        if not fields:
-            reason = f"{td.__name__} has no usable fields"
-            raise UnsupportedFieldTypeError(td, reason, field_reason=reason)
-        return fields
+        return cast(
+            "dict[str, GraphQLField]",
+            self._build_fields(
+                td, _typeddict_specs(td, input_side=False), input_side=False
+            ),
+        )
 
     def _td_input_fields(self, td: Any) -> dict[str, GraphQLInputField]:
-        """Required-key fields are NonNull arguments (no FastAPI ``required``
-        flag exists for TypedDicts — the key set IS the requiredness)."""
-        required = td.__required_keys__
-        fields: dict[str, GraphQLInputField] = {}
-        for field_name, annotation in _typeddict_hints(td).items():
-            gname = sanitize_graphql_name(
-                field_name, what=f"{td.__name__} input field"
-            )
-            if gname != field_name:
-                self._input_wire_map.setdefault(td, {})[gname] = field_name
-            field_type, degraded = self._degradable_input_type(
-                annotation, context=f"{td.__name__}.{field_name}"
-            )
-            gtype: GraphQLInputType = (
-                GraphQLNonNull(field_type) if field_name in required else field_type
-            )
-            description = describe_literal_values(annotation)
-            if degraded is not None:
-                description = append_note(description, _degraded_field_note(degraded))
-                self._record_degraded(f"{td.__name__}.{field_name}", degraded)
-            elif (bridge := _union_json_bridge(annotation)) is not None:
-                reason, note = bridge
-                description = append_note(description, note)
-                self._record_degraded(f"{td.__name__}.{field_name}", reason)
-            fields[gname] = GraphQLInputField(gtype, description=description)
-        if not fields:
-            reason = f"{td.__name__} has no usable input fields"
-            raise UnsupportedFieldTypeError(td, reason, field_reason=reason)
-        return fields
+        return cast(
+            "dict[str, GraphQLInputField]",
+            self._build_fields(
+                td, _typeddict_specs(td, input_side=True), input_side=True
+            ),
+        )
 
     # -------------------------------------------------------------- dataclass
 
@@ -971,75 +1003,20 @@ class TypeBuilder:
         )
 
     def _dataclass_output_fields(self, dc: Any) -> dict[str, GraphQLField]:
-        """Dataclass output fields: annotations resolved like a TypedDict's
-        (``_typeddict_hints`` is the same job for any hints-bearing class),
-        nullability from the ANNOTATION — unlike a TypedDict's optional
-        keys, every dataclass field is always present in a materialized
-        instance (defaults fill in), so only ``Optional`` makes it
-        nullable. ``dataclasses.fields()`` already excludes ClassVar and
-        InitVar."""
-        hints = _typeddict_hints(dc)
-        fields: dict[str, GraphQLField] = {}
-        for f in dataclass_fields(dc):
-            annotation = hints.get(f.name, f.type)
-            gname = sanitize_graphql_name(f.name, what=f"{dc.__name__} field")
-            context = f"{dc.__name__}.{f.name}"
-            gtype, degraded = self._degradable_output_type(
-                annotation, context, bare=is_optional_annotation(annotation)
-            )
-            description = describe_literal_values(annotation)
-            if degraded is not None:
-                description = append_note(description, _degraded_field_note(degraded))
-                self._record_degraded(f"{dc.__name__}.{f.name}", degraded)
-            elif (bridge := _union_json_bridge(annotation)) is not None:
-                reason, note = bridge
-                description = append_note(description, note)
-                self._record_degraded(f"{dc.__name__}.{f.name}", reason)
-            fields[gname] = GraphQLField(gtype, description=description)
-        if not fields:
-            reason = f"{dc.__name__} has no usable fields"
-            raise UnsupportedFieldTypeError(dc, reason, field_reason=reason)
-        return fields
+        return cast(
+            "dict[str, GraphQLField]",
+            self._build_fields(
+                dc, _dataclass_specs(dc, input_side=False), input_side=False
+            ),
+        )
 
     def _dataclass_input_fields(self, dc: Any) -> dict[str, GraphQLInputField]:
-        """Dataclass input fields: a field with no default and no
-        default_factory is a required NonNull argument; a defaulted one is
-        optional and carries its literal default (factory-only defaults
-        carry none — calling the factory at schema-build time would be a
-        side effect; FastAPI materializes it when the argument is absent,
-        and a 422 surfaces as a field error)."""
-        hints = _typeddict_hints(dc)
-        fields: dict[str, GraphQLInputField] = {}
-        for f in dataclass_fields(dc):
-            annotation = hints.get(f.name, f.type)
-            gname = sanitize_graphql_name(
-                f.name, what=f"{dc.__name__} input field"
-            )
-            field_type, degraded = self._degradable_input_type(
-                annotation, context=f"{dc.__name__}.{f.name}"
-            )
-            required = f.default is MISSING and f.default_factory is MISSING
-            gtype: GraphQLInputType = (
-                GraphQLNonNull(field_type) if required else field_type
-            )
-            description = describe_literal_values(annotation)
-            if degraded is not None:
-                description = append_note(description, _degraded_field_note(degraded))
-                self._record_degraded(f"{dc.__name__}.{f.name}", degraded)
-            elif (bridge := _union_json_bridge(annotation)) is not None:
-                reason, note = bridge
-                description = append_note(description, note)
-                self._record_degraded(f"{dc.__name__}.{f.name}", reason)
-            default: Any = Undefined
-            if not required and f.default is not MISSING:
-                default = graphql_default(f.default)
-            fields[gname] = GraphQLInputField(
-                gtype, description=description, default_value=default
-            )
-        if not fields:
-            reason = f"{dc.__name__} has no usable input fields"
-            raise UnsupportedFieldTypeError(dc, reason, field_reason=reason)
-        return fields
+        return cast(
+            "dict[str, GraphQLInputField]",
+            self._build_fields(
+                dc, _dataclass_specs(dc, input_side=True), input_side=True
+            ),
+        )
 
     # ------------------------------------------------------------------ enum
 

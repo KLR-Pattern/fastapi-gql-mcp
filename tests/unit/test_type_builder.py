@@ -19,6 +19,8 @@ from fastapi_gql_mcp.type_builder import (
     TypeBuilder,
     UnsupportedFieldTypeError,
     describe_literal_values,
+    request_wire_name,
+    sanitize_graphql_name,
 )
 
 
@@ -297,3 +299,59 @@ class TestInputListNullability:
         # Optional list ITEMS map to [T] (no NonNull), matching the output
         # side's list-of-optional contract.
         assert render(TypeBuilder().input_type(list[Optional[int]])) == "[Int]"  # noqa: UP045
+
+
+class TestNameSanitization:
+    def test_digit_leading_and_empty_names_prefixed(self):
+        # Wire names FastAPI accepts but GraphQL rejects as identifiers:
+        # sanitize prefixes an underscore (and never returns an empty name).
+        assert sanitize_graphql_name("123abc") == "_123abc"
+        assert sanitize_graphql_name("") == "_unnamed"
+        assert sanitize_graphql_name("legal_name") == "legal_name"
+
+
+class TestLiteralEdges:
+    def test_float_literal_has_no_scalar(self):
+        # _LITERAL_SCALARS covers str/int/bool; float members have no scalar
+        # to ride, so the bridge refuses rather than guess.
+        with pytest.raises(UnsupportedFieldTypeError, match="has no GraphQL scalar"):
+            TypeBuilder().output_type(Literal[1.5])
+
+
+class TestWireNameEdges:
+    def test_alias_path_without_choices_falls_back_to_field_name(self):
+        # An alias with no string choices (pydantic AliasPath names a nested
+        # location, not a flat wire key) has nothing to flatten: the field
+        # name is the only name FastAPI can be counted on to accept.
+        from pydantic import AliasPath, Field
+
+        info = Field(alias=AliasPath("nested", "x"))
+        assert request_wire_name(info, "flat") == "flat"
+
+
+class TestNameCollisions:
+    def test_same_module_tail_twice_takes_counter(self):
+        # Two same-named classes from different modules qualify by module
+        # tail; a THIRD whose tail ALSO collides (two distinct modules both
+        # named m) exhausts qualification and takes the numeric suffix.
+        from types import ModuleType
+
+        def mod_named(name: str):
+            mod = ModuleType(name)
+            exec(
+                "from pydantic import BaseModel\n"
+                "class Item(BaseModel):\n    a: int\n",
+                mod.__dict__,
+            )
+            return mod
+
+        first = mod_named("orig")
+        other = mod_named("other")    # different tail -> qualified name
+        same_tail = mod_named("other")  # tail collides with SECOND -> counter
+
+        b = TypeBuilder()
+        b.output_type(first.Item)
+        second = b.output_type(other.Item).of_type
+        assert second.name == "Item_other"
+        third = b.output_type(same_tail.Item).of_type
+        assert third.name == "Item_other_2"
