@@ -155,9 +155,10 @@ def _union_json_bridge(annotation: Any) -> tuple[str, str] | None:
     output/input, TypedDict output/input) records the degradation
     identically — the readiness report must never depend on which side a
     union field happens to sit on."""
-    if union_members(annotation) is None:
+    normalized = _normalize_typevar(strip_annotated(annotation))
+    if union_members(normalized) is None:
         return None
-    names = ", ".join(union_member_names(annotation))
+    names = ", ".join(union_member_names(normalized))
     note = (
         f"Raw JSON whose shape is one of: {names} (union field — "
         "select bare; GraphQL cannot promise one member)."
@@ -191,6 +192,22 @@ def _wire_key_out_type(wire: dict[str, str]) -> Callable[[Any], Any]:
         return value
 
     return out
+
+
+def _normalize_typevar(annotation: Any) -> Any:
+    """A constrained TypeVar means "one of these"; a bound TypeVar means
+    "this or narrower" — pydantic validates exactly that way, so the
+    GraphQL mapping normalizes to the constraint union / the bound before
+    dispatching. An unconstrained TypeVar passes through to the
+    unbound-TypeVar guidance (field level) or the route-level JSON
+    fallback."""
+    if not isinstance(annotation, TypeVar):
+        return annotation
+    if annotation.__constraints__:
+        return Union[annotation.__constraints__]  # noqa: UP007 — dynamic tuple
+    if annotation.__bound__ is not None:
+        return annotation.__bound__
+    return annotation
 
 
 def _first_wire_name(raw: Any, fallback: str) -> str:
@@ -520,7 +537,7 @@ class TypeBuilder:
     def _bare_output(
         self, annotation: Any, context: str
     ) -> GraphQLScalarType | GraphQLObjectType | GraphQLEnumType | GraphQLList[Any]:
-        annotation = strip_annotated(annotation)
+        annotation = _normalize_typevar(strip_annotated(annotation))
         if is_collection_annotation(annotation):
             inner = get_args(annotation)[0]
             if is_optional_annotation(inner):
@@ -711,7 +728,7 @@ class TypeBuilder:
         Whether an argument is required is decided by FastAPI's own `required`
         flag at the argument level (NonNull there), not by the annotation.
         """
-        annotation = unwrap_optional(annotation)
+        annotation = _normalize_typevar(unwrap_optional(annotation))
         if is_collection_annotation(annotation):
             inner = get_args(annotation)[0]
             if is_optional_annotation(inner):

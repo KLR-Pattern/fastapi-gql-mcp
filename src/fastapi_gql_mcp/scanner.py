@@ -13,7 +13,7 @@ import inspect
 import logging
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, TypeVar
 
 from fastapi import FastAPI
 from fastapi.dependencies.models import Dependant
@@ -103,6 +103,9 @@ class RouteInfo:
     deprecated: bool = False
     response_filter: str | None = None  # kwarg that unshapes the response JSON
     domains: frozenset[tuple[str, ...]] = frozenset()
+    # Set when SCANNING itself degraded this route to raw JSON (unbound
+    # TypeVar at a route boundary): the ready-made reason, verbatim.
+    scan_degraded_reason: str | None = None
 
     @property
     def is_mutation(self) -> bool:
@@ -172,6 +175,8 @@ def _degraded_reason(route: RouteInfo) -> str | None:
     """Why one scanned route degrades to raw JSON (loses field selection),
     or None when its response stays structured. Shared by the startup
     notice and ReadinessReport so the two can never drift apart."""
+    if route.scan_degraded_reason is not None:
+        return route.scan_degraded_reason
     if route.response_annotation is Any:
         return (
             "no typed response — bridged as raw JSON; add a return "
@@ -579,28 +584,45 @@ class RouterScanner:
             else [_to_param_info(p) for p in query_p]
         )
 
+        path_params = [_to_param_info(p, path_param=True) for p in path_p]
+        body_params = [_to_param_info(p) for p in body_p]
+
         # Filtered responses bypass the structured type entirely (the JSON
         # scalar carries whatever arrives); only their INPUT types are trialed.
         response_filter = response_filter_kwarg(route)
         is_void = response_annotation is type(None)
+        # An unbound TypeVar at a route boundary degrades THIS route to raw
+        # JSON (still callable, audited) — the same fallback a TypeVar field
+        # already gets inside a model. Anything else unmappable keeps the
+        # skip: no fallback can express that shape (e.g. `-> bytes`).
+        degraded_reasons: list[str] = []
         try:
             if response_filter is None and not is_void:
-                types.output_type(
-                    response_annotation, context=f"response of {route.path}"
-                )
-            for param in (
-                *(_to_param_info(p, path_param=True) for p in path_p),
-                *query_params,
-                *(_to_param_info(p) for p in body_p),
-            ):
-                types.input_type(
-                    param.annotation, context=f"parameter '{param.name}' of {route.path}"
-                )
+                try:
+                    types.output_type(
+                        response_annotation, context=f"response of {route.path}"
+                    )
+                except UnsupportedFieldTypeError as exc:
+                    if not isinstance(exc.annotation, TypeVar):
+                        raise
+                    degraded_reasons.append(exc.field_reason or exc.context)
+                    response_annotation = Any
+            for params in (path_params, query_params, body_params):
+                for i, param in enumerate(params):
+                    try:
+                        types.input_type(
+                            param.annotation,
+                            context=f"parameter '{param.name}' of {route.path}",
+                        )
+                    except UnsupportedFieldTypeError as exc:
+                        if not isinstance(exc.annotation, TypeVar):
+                            raise
+                        degraded_reasons.append(exc.field_reason or exc.context)
+                        params[i] = replace(param, annotation=Any)
         except UnsupportedFieldTypeError as exc:
             skip(f"unsupported type: {exc}")
             return None
 
-        body_params = [_to_param_info(p) for p in body_p]
         if body_params and _body_embeds(body_params):
             body_params = [replace(p, embed=True) for p in body_params]
 
@@ -612,7 +634,7 @@ class RouterScanner:
             method=method,
             path=route.path,
             field_name=field_name_for(route),
-            path_params=tuple(_to_param_info(p, path_param=True) for p in path_p),
+            path_params=tuple(path_params),
             query_params=tuple(query_params),
             body_params=tuple(body_params),
             response_annotation=response_annotation,
@@ -621,6 +643,9 @@ class RouterScanner:
             deprecated=deprecated,
             response_filter=response_filter,
             domains=domains_for(str_tags, route.path),
+            scan_degraded_reason=(
+                "; ".join(degraded_reasons) if degraded_reasons else None
+            ),
         )
 
     @staticmethod
