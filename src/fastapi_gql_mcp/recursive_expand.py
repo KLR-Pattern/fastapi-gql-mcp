@@ -9,21 +9,21 @@ projection) — the document is the only thing limiting what gets walked.
 
 Unrolling removes that limitation: the selection set where the agent stops
 becomes the repeating template, stamped back under the recursive edge up
-to ``UNROLL_LIMIT`` levels. Data still stops where it stops — empty lists
+to ``unroll_limit()`` levels. Data still stops where it stops — empty lists
 terminate the walk — so responses carry the tree's true depth while
 per-level field filtering stays the agent's own native selections, at any
 position in the document (the chain need not start at the root).
 
-``UNROLL_LIMIT`` is an implementation constant, not a user-facing bound:
-it stays well inside Python's recursion budget (AST validation walks the
-unrolled document recursively; runtime execution cost is bounded by actual
-data depth, since empty lists stop the walk). Trees deeper than it cannot
-practically be served through GraphQL execution anyway — graphql-core
-itself recurses per level.
+``unroll_limit()`` is a function of the process recursion budget, not a
+fixed bound — it scales automatically when an operator raises
+``sys.setrecursionlimit`` to serve deeper trees. If a response's recursive
+nesting still reaches the floor, the handler appends a notice to the
+GraphQL ``errors`` channel (data stays; truncation is never silent).
 """
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from graphql import GraphQLSchema
@@ -40,17 +40,47 @@ def _unwrap(field_type: Any) -> Any:
     return field_type
 
 
-# Implementation ceiling for the unrolled document, not a data limit.
-# Measured under Python's default recursion limit (1000 frames):
-# - through the real app (FastAPI/pydantic serialization) trees die at ~90 levels
-# - pure graphql-core projection (dict injection, serialization bypassed) dies
-#   at ~82 — it burns ~8 frames per level itself, so no stage is "the" chokepoint;
-#   the universal constraint is recursion budget / per-level frame cost
-# - raising sys.setrecursionlimit lifts every ceiling proportionally
-#   (1000-level trees verified at limit 20000; this limit must scale with it)
-# 100 therefore sits at the real-world ceiling while keeping the validation
-# recursion (~2 frames per unrolled level) inside the default budget.
-UNROLL_LIMIT = 100
+def unroll_limit() -> int:
+    """How deep the unrolled document may go — a function of the process's
+    recursion budget, not a fixed number.
+
+    Measured under Python's default recursion limit (1000 frames): trees die
+    at ~90 levels through the real app (FastAPI/pydantic serialization) and
+    at ~82 under pure graphql-core projection (~8 frames per level) — no
+    stage is "the" chokepoint; the universal constraint is recursion budget
+    divided by per-level frame cost. ``max(100, recursionlimit // 10)`` sits
+    at that ceiling under defaults and scales up automatically when an
+    operator raises ``sys.setrecursionlimit`` to serve deeper trees, while
+    validation (~2 frames per unrolled level) stays at a fifth of budget.
+    """
+    return max(100, sys.getrecursionlimit() // 10)
+
+
+def hit_unroll_floor(data: Any, edges: frozenset[tuple[str, str]], limit: int) -> bool:
+    """True when the response's recursive nesting reaches the unroll limit —
+    i.e. deeper data MAY have been truncated (a true leaf at exactly that
+    depth is indistinguishable, hence the conditional wording upstream).
+
+    Iterative on purpose: the whole point is to inspect a tree as deep as
+    the limit without spending recursion on it."""
+    edge_names = {fname for _, fname in edges}
+    stack: list[tuple[Any, int]] = [(data, 0)]
+    deepest = 0
+    while stack:
+        value, depth = stack.pop()
+        if depth > deepest:
+            deepest = depth
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in edge_names and isinstance(child, list):
+                    if child:
+                        stack.append((child, depth + 1))
+                else:
+                    stack.append((child, depth))
+        elif isinstance(value, list):
+            for item in value:
+                stack.append((item, depth))
+    return deepest >= limit
 
 
 def recursive_edges(schema: GraphQLSchema) -> frozenset[tuple[str, str]]:

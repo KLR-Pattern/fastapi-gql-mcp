@@ -240,3 +240,93 @@ class TestSchemaNote:
         assert sdl.count("full subtree at true depth") == 1  # once per type
         assert sdl.count("repeats per level") == 1
         assert "siblings: [Family!]" in sdl and "cousins: [Family!]" in sdl
+
+
+class TestUnrollLimit:
+    async def test_limit_tracks_recursion_budget(self, monkeypatch):
+        from fastapi_gql_mcp.recursive_expand import unroll_limit
+
+        monkeypatch.setattr("sys.setrecursionlimit", lambda n: None)
+        monkeypatch.setattr("sys.getrecursionlimit", lambda: 1000)
+        assert unroll_limit() == 100  # default budget → floor of 100
+
+        monkeypatch.setattr("sys.getrecursionlimit", lambda: 20000)
+        assert unroll_limit() == 2000  # raised budget scales up with it
+
+    async def test_floor_hit_reports_error_not_silent(self, monkeypatch):
+        """Data deeper than the scaffold must never vanish silently: the
+        errors channel carries a notice while the data stays."""
+        TREE = {"name": "n", "children": [
+            {"name": "n", "children": [
+                {"name": "n", "children": [
+                    {"name": "n", "children": [
+                        {"name": "n", "children": []},
+                    ]},
+                ]},
+            ]},
+        ]}  # 5 levels against a scaffold of 3
+
+        monkeypatch.setattr("fastapi_gql_mcp.handler.unroll_limit", lambda: 3)
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["t"])
+        async def tree():
+            raise RuntimeError("invoker patched")
+
+        handler = RouterGraphQLHandler(app)
+
+        async def fake_invoke(*a, **k):
+            return TREE
+
+        handler._invoker.invoke = fake_invoke
+        result = await handler.execute("{ t { tree { name children { name } } } }")
+        assert result["data"]["t"]["tree"] is not None  # data stays
+        messages = [e["message"] for e in result.get("errors", [])]
+        assert any("unroll limit (3 levels)" in m for m in messages), messages
+        assert any("may have been truncated" in m for m in messages)
+
+    async def test_no_floor_error_below_limit(self, monkeypatch):
+        monkeypatch.setattr("fastapi_gql_mcp.handler.unroll_limit", lambda: 10)
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["t"])
+        async def tree():
+            return chain(3, "root")
+
+        handler = RouterGraphQLHandler(app)
+        result = await handler.execute("{ t { tree { name children { name } } } }")
+        assert "errors" not in result, result
+
+    async def test_raised_budget_serves_deep_tree(self):
+        """The adaptive limit in action: raise the process budget and a
+        200-level tree serves in full, no floor error."""
+        import sys
+
+        old = sys.getrecursionlimit()
+        sys.setrecursionlimit(10000)
+        try:
+            TREE = {"name": "n", "children": []}
+            node = TREE
+            for _ in range(199):
+                node["children"] = [{"name": "n", "children": []}]
+                node = node["children"][0]
+
+            app = FastAPI()
+
+            @app.get("/tree", response_model=Node, tags=["t"])
+            async def tree():
+                raise RuntimeError("invoker patched")
+
+            handler = RouterGraphQLHandler(app)
+
+            async def fake_invoke(*a, **k):
+                return TREE
+
+            handler._invoker.invoke = fake_invoke
+            result = await handler.execute(
+                "{ t { tree { name children { name } } } }"
+            )
+            assert "errors" not in result, result
+            assert deepest(result["data"]["t"]["tree"]) == 200
+        finally:
+            sys.setrecursionlimit(old)

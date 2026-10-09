@@ -15,7 +15,12 @@
   resolution is pure projection), so unrolling merely removes the document
   limitation. `max_depth` still guards the document as written; fragments
   in a recursive template and mutual recursion (A.b: B / B.a: A) are
-  consciously left unexpanded. The recursive type's schema description
+  consciously left unexpanded. The unroll ceiling is a function of the
+  process recursion budget (`max(100, sys.getrecursionlimit() // 10)`) —
+  it scales automatically when an operator raises the limit to serve
+  deeper trees; if a response's recursive nesting still reaches the floor,
+  a notice is appended to the GraphQL `errors` channel (data stays —
+  truncation is never silent). The recursive type's schema description
   carries a one-line contract ("full subtree at true depth; your
   selection repeats per level") once per type — local placement at
   ~15 tokens instead of per-field paragraphs. The recursive field's schema description

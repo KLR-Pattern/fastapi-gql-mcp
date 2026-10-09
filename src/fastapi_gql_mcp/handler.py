@@ -27,11 +27,10 @@ from opentelemetry import trace
 from fastapi_gql_mcp.depth_guard import parse_guarded
 from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
 from fastapi_gql_mcp.recursive_expand import (
-    UNROLL_LIMIT as _RECURSIVE_UNROLL_LIMIT,
-)
-from fastapi_gql_mcp.recursive_expand import (
     expand_recursive_chains,
+    hit_unroll_floor,
     recursive_edges,
+    unroll_limit,
 )
 from fastapi_gql_mcp.scanner import (
     ReadinessReport,
@@ -215,6 +214,21 @@ class RouterGraphQLHandler:
             payload["data"] = result.data
         if result.errors:
             payload["errors"] = [error.formatted for error in result.errors]
+        # Recursive unrolling touched its floor: deeper data may have been
+        # cut. Never silent — say it in the errors channel (data stays).
+        if result.data is not None and self._recursive_edges:
+            limit = unroll_limit()
+            if hit_unroll_floor(result.data, self._recursive_edges, limit):
+                payload.setdefault("errors", []).append(
+                    {
+                        "message": (
+                            f"recursive subtree reached the unroll limit "
+                            f"({limit} levels); deeper data may have been "
+                            f"truncated. The limit scales with the process "
+                            f"recursion budget (sys.setrecursionlimit)."
+                        )
+                    }
+                )
         return payload
 
     # ------------------------------------------------------- document compile
@@ -263,7 +277,7 @@ class RouterGraphQLHandler:
                 document,
                 self._schema,
                 self._recursive_edges,
-                _RECURSIVE_UNROLL_LIMIT,
+                unroll_limit(),
             )
         # Custom rules EXTEND the standard set (replacing it would silently
         # drop field/type checking for anyone passing a rule).
