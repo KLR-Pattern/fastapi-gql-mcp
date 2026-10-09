@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: read
+      contents: write  # gh release create needs it; PyPI steps need only read
 
     steps:
       - name: Checkout repository
@@ -30,3 +30,30 @@ jobs:
 
       - name: Publish to PyPI
         run: uv publish --token ${{ secrets.PYPI_PUBLISHER }}
+
+      - name: Create the GitHub release from the CHANGELOG section
+        # Same tag, notes extracted from CHANGELOG.md — the release entry
+        # must never be forgotten again (0.9.0 shipped to PyPI with no
+        # Releases-page entry and looked like a failed release).
+        # Idempotent: a re-run skips creation when the entry already exists.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists — skipping"
+            exit 0
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v header="## $VERSION " '
+            index($0, header) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "no CHANGELOG section for $VERSION — falling back to tag annotation"
+            git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > release-notes.md
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            --latest
