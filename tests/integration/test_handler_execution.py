@@ -273,3 +273,38 @@ class TestRecursiveResponseModels:
         assert "errors" not in result, result
         nested = result["data"]["tree"]["tree"]
         assert nested["children"][1]["children"][0]["name"] == "c"
+
+
+class TestGroupNameCollisions:
+    async def test_same_pascal_name_qualifies(self, make_handler, caplog):
+        """Two domain paths that title-case to the same group type (nested
+        'shop:catalog' vs flat 'shop_catalog') must both survive: the second
+        gets a numbered name and a warning, never a silent clash."""
+        import logging
+
+        app = FastAPI()
+
+        @app.get("/nested", response_model=ItemOut, tags=["shop:catalog"])
+        async def nested() -> ItemOut:
+            return ItemOut(id=1, name="n")
+
+        @app.get("/flat", response_model=ItemOut, tags=["shop_catalog"])
+        async def flat() -> ItemOut:
+            return ItemOut(id=2, name="f")
+
+        with caplog.at_level(logging.WARNING, logger="fastapi_gql_mcp.schema_builder"):
+            handler = make_handler(app)
+        sdl = handler.get_sdl()
+        assert "type ShopCatalogQuery {" in sdl
+        assert "type ShopCatalogQuery2 {" in sdl
+        assert "already owned by" in caplog.text
+
+        result = await handler.execute(
+            "{ shop { catalog { nested { id } } } shop_catalog { flat { id } } }"
+        )
+        assert result == {
+            "data": {
+                "shop": {"catalog": {"nested": {"id": 1}}},
+                "shop_catalog": {"flat": {"id": 2}},
+            }
+        }, result

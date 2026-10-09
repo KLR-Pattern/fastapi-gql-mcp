@@ -33,14 +33,12 @@ from graphql import (
 from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
 from fastapi_gql_mcp.naming import DuplicateFieldError
 from fastapi_gql_mcp.scalars import GraphQLJSON
-from fastapi_gql_mcp.scanner import ParamInfo, RouteInfo
+from fastapi_gql_mcp.scanner import OutputKind, ParamInfo, RouteInfo
 from fastapi_gql_mcp.type_builder import (
     TypeBuilder,
     append_note,
     describe_literal_values,
     graphql_default,
-    union_member_names,
-    union_members,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,6 +99,13 @@ def _resolver(route: RouteInfo, invoker: RouteInvoker) -> Any:
     return resolve
 
 
+def _deprecation_reason(route: RouteInfo) -> str | None:
+    # OpenAPI `deprecated: true` maps onto GraphQL-native deprecation:
+    # introspection exposes isDeprecated/deprecationReason and GraphiQL
+    # strikes the field through. Deprecated fields stay executable.
+    return "This endpoint is deprecated." if route.deprecated else None
+
+
 def _leaf_field(
     route: RouteInfo, invoker: RouteInvoker, types: TypeBuilder
 ) -> GraphQLField:
@@ -109,7 +114,8 @@ def _leaf_field(
     # several routes in one query keep the other results. A NonNull field
     # error would null the whole response per GraphQL spec.
     description = route.description
-    if route.response_annotation is type(None):
+    plan = route.output
+    if plan.kind is OutputKind.VOID:
         # Explicit `-> None` (204-style deletes and side-effect calls): the
         # CALL is the point, and "no response body" is an explicit contract —
         # so the field bridges as a Boolean success flag: true on 2xx, and
@@ -118,7 +124,6 @@ def _leaf_field(
             "Returns true on success — this route has no response body "
             "(-> None / 204); failures surface as field errors."
         )
-        description = append_note(description, note)
         base_resolve = _resolver(route, invoker)
 
         async def void_resolve(_root: Any, _info: Any, **kwargs: Any) -> bool:
@@ -129,73 +134,35 @@ def _leaf_field(
             GraphQLBoolean,
             args=_arguments(route, types),
             resolve=void_resolve,
-            description=description,
-            deprecation_reason=(
-                "This endpoint is deprecated." if route.deprecated else None
-            ),
+            description=append_note(description, note),
+            deprecation_reason=_deprecation_reason(route),
         )
-    if route.response_annotation is Any:
-        # No return annotation / response_model: bridge whatever arrives as
-        # raw JSON rather than skipping — and tell agents (and the startup
-        # log) that a typed contract would unlock a structured, selectable
-        # field.
-        note = (
-            "Returns raw JSON: this endpoint declares no response type. "
-            "Add a return annotation or response_model for a structured, "
-            "field-selectable type."
-        )
-        description = append_note(description, note)
+    if plan.json_scalar:
+        # Every raw-JSON bucket (TypeVar-degraded, untyped, filtered,
+        # union) tells the agent the same story the readiness report tells
+        # the operator — the plan's note IS the classified reason.
         return GraphQLField(
             GraphQLJSON,
             args=_arguments(route, types),
             resolve=_resolver(route, invoker),
-            description=description,
-            deprecation_reason=(
-                "This endpoint is deprecated." if route.deprecated else None
-            ),
+            description=append_note(description, plan.sdl_note),
+            deprecation_reason=_deprecation_reason(route),
         )
-    notes: list[str] = []
-    # Route-level Literals get the same allowed-values note model fields
-    # carry (_field_description) — the route field is where agents read it.
+    # Structured: route-level Literals get the same allowed-values note
+    # model fields carry (_field_description) — the route field is where
+    # agents read it.
     literal_note = describe_literal_values(route.response_annotation)
     if literal_note:
-        notes.append(literal_note)
-    if route.response_filter:
-        # Serialization filters (exclude_unset/include/...) reshape the JSON
-        # after validation, so per-field promises cannot hold: bridge the
-        # response as a raw JSON blob (no field selection) instead of skipping
-        # the route, and tell agents why.
-        notes.append(
-            "Returns a raw JSON blob without field selection: this route "
-            f"filters its response via {route.response_filter}, so the "
-            "GraphQL schema makes no per-field promises."
-        )
-    if union_members(route.response_annotation) is not None:
-        names = ", ".join(union_member_names(route.response_annotation))
-        notes.append(
-            f"Returns raw JSON whose shape is one of: {names} — union "
-            "responses vary at runtime; select the field bare and inspect "
-            "the result."
-        )
-    if notes:
-        description = "\n\n".join([d for d in (description, *notes) if d])
-    if route.response_filter or union_members(route.response_annotation) is not None:
-        response_type: Any = GraphQLJSON
-    else:
-        response_type = types.bare_output_type(
-            route.response_annotation, context=f"response of {route.path}"
-        )
+        description = append_note(description, literal_note)
+    response_type = types.bare_output_type(
+        route.response_annotation, context=f"response of {route.path}"
+    )
     return GraphQLField(
         response_type,
         args=_arguments(route, types),
         resolve=_resolver(route, invoker),
         description=description,
-        # OpenAPI `deprecated: true` maps onto GraphQL-native deprecation:
-        # introspection exposes isDeprecated/deprecationReason and GraphiQL
-        # strikes the field through. Deprecated fields stay executable.
-        deprecation_reason=(
-            "This endpoint is deprecated." if route.deprecated else None
-        ),
+        deprecation_reason=_deprecation_reason(route),
     )
 
 

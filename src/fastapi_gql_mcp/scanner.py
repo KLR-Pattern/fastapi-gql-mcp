@@ -13,6 +13,7 @@ import inspect
 import logging
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from typing import Any, TypeVar
 
 from fastapi import FastAPI
@@ -36,6 +37,43 @@ from fastapi_gql_mcp.type_builder import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class OutputKind(Enum):
+    """The four capability buckets a route's response lands in (README
+    'Capability boundaries'), plus the degradation causes that collapse
+    into the raw-JSON bucket."""
+
+    VOID = "void"  # -> None: Boolean success field — its own contract
+    STRUCTURED = "structured"
+    TYPEVAR = "typevar"  # unbound TypeVar degraded this route at the boundary
+    ANY = "any"  # no typed response
+    FILTER = "filter"  # serialization kwargs reshape the JSON
+    UNION = "union"  # union response
+
+
+@dataclass(frozen=True)
+class OutputPlan:
+    """Route-response classification, computed ONCE at scan time. The plan
+    is the single source behind the startup notice, ReadinessReport, and
+    the SDL field note — the three can never drift apart (README: 'One
+    classifier backs both')."""
+
+    kind: OutputKind
+    audit_reason: str | None = None  # readiness + startup-notice text
+    sdl_note: str = ""  # agent-facing description note
+
+    @property
+    def json_scalar(self) -> bool:
+        return self.kind in (
+            OutputKind.TYPEVAR,
+            OutputKind.ANY,
+            OutputKind.FILTER,
+            OutputKind.UNION,
+        )
+
+
+STRUCTURED_PLAN = OutputPlan(OutputKind.STRUCTURED)
 
 # Priority when a route registers multiple verbs (e.g. @app.api_methods).
 _VERB_PRIORITY = ("GET", "POST", "PUT", "PATCH", "DELETE")
@@ -103,9 +141,10 @@ class RouteInfo:
     deprecated: bool = False
     response_filter: str | None = None  # kwarg that unshapes the response JSON
     domains: frozenset[tuple[str, ...]] = frozenset()
-    # Set when SCANNING itself degraded this route to raw JSON (unbound
-    # TypeVar at a route boundary): the ready-made reason, verbatim.
-    scan_degraded_reason: str | None = None
+    # Output classification computed once at scan time (_classify_output):
+    # the single source the startup notice, ReadinessReport, and the SDL
+    # field note all read.
+    output: OutputPlan = STRUCTURED_PLAN
 
     @property
     def is_mutation(self) -> bool:
@@ -171,25 +210,77 @@ def build_readiness_report(
     )
 
 
+def _classify_output(
+    annotation: Any,
+    response_filter: str | None,
+    typevar_response: str | None,
+    param_reasons: list[str],
+) -> OutputPlan:
+    """Classify one route's response once, at scan time. Bucket priority
+    follows the audit's historical first-match order; TypeVar reasons (the
+    response's own and its params') ride along as audit text in every
+    bucket, exactly as the old joined scan_degraded_reason did."""
+    reasons = [r for r in (typevar_response, *param_reasons) if r]
+    audit = "; ".join(reasons) if reasons else None
+    if annotation is type(None):
+        # A bodyless response has nothing to filter or union over — the
+        # Boolean success bucket is its own contract, never a degradation.
+        return OutputPlan(OutputKind.VOID, audit_reason=audit)
+    if typevar_response is not None:
+        # The annotation was rewritten to Any at the trial; the plan keeps
+        # the REAL reason so the SDL note never points at the wrong fix.
+        return OutputPlan(
+            OutputKind.TYPEVAR,
+            audit_reason=audit,
+            sdl_note=f"Returns raw JSON: {typevar_response}.",
+        )
+    if annotation is Any:
+        return OutputPlan(
+            OutputKind.ANY,
+            audit_reason=audit
+            or (
+                "no typed response — bridged as raw JSON; add a return "
+                "annotation or response_model for a structured type"
+            ),
+            sdl_note=(
+                "Returns raw JSON: this endpoint declares no response type. "
+                "Add a return annotation or response_model for a structured, "
+                "field-selectable type."
+            ),
+        )
+    if response_filter:
+        return OutputPlan(
+            OutputKind.FILTER,
+            audit_reason=audit or f"response filtered via {response_filter}",
+            sdl_note=(
+                "Returns a raw JSON blob without field selection: this route "
+                f"filters its response via {response_filter}, so the "
+                "GraphQL schema makes no per-field promises."
+            ),
+        )
+    if (names := union_member_names(annotation)):
+        return OutputPlan(
+            OutputKind.UNION,
+            audit_reason=audit
+            or (
+                f"union response ({'|'.join(names)}) — restructure into one "
+                "model per shape to regain field selection"
+            ),
+            sdl_note=(
+                f"Returns raw JSON whose shape is one of: {', '.join(names)} — "
+                "union responses vary at runtime; select the field bare and "
+                "inspect the result."
+            ),
+        )
+    return OutputPlan(OutputKind.STRUCTURED, audit_reason=audit)
+
+
 def _degraded_reason(route: RouteInfo) -> str | None:
     """Why one scanned route degrades to raw JSON (loses field selection),
-    or None when its response stays structured. Shared by the startup
-    notice and ReadinessReport so the two can never drift apart."""
-    if route.scan_degraded_reason is not None:
-        return route.scan_degraded_reason
-    if route.response_annotation is Any:
-        return (
-            "no typed response — bridged as raw JSON; add a return "
-            "annotation or response_model for a structured type"
-        )
-    if route.response_filter:
-        return f"response filtered via {route.response_filter}"
-    if (names := union_member_names(route.response_annotation)):
-        return (
-            f"union response ({'|'.join(names)}) — restructure into one model "
-            "per shape to regain field selection"
-        )
-    return None
+    or None when its response stays structured. Reads the plan computed at
+    scan time — the single source shared by the startup notice and
+    ReadinessReport."""
+    return route.output.audit_reason
 
 
 def _mf_wire(p: Any) -> str:
@@ -595,7 +686,8 @@ class RouterScanner:
         # JSON (still callable, audited) — the same fallback a TypeVar field
         # already gets inside a model. Anything else unmappable keeps the
         # skip: no fallback can express that shape (e.g. `-> bytes`).
-        degraded_reasons: list[str] = []
+        typevar_response: str | None = None
+        param_reasons: list[str] = []
         try:
             if response_filter is None and not is_void:
                 try:
@@ -605,7 +697,7 @@ class RouterScanner:
                 except UnsupportedFieldTypeError as exc:
                     if not isinstance(exc.annotation, TypeVar):
                         raise
-                    degraded_reasons.append(exc.field_reason or exc.context)
+                    typevar_response = exc.field_reason or exc.context
                     response_annotation = Any
             for params in (path_params, query_params, body_params):
                 for i, param in enumerate(params):
@@ -617,7 +709,7 @@ class RouterScanner:
                     except UnsupportedFieldTypeError as exc:
                         if not isinstance(exc.annotation, TypeVar):
                             raise
-                        degraded_reasons.append(exc.field_reason or exc.context)
+                        param_reasons.append(exc.field_reason or exc.context)
                         params[i] = replace(param, annotation=Any)
         except UnsupportedFieldTypeError as exc:
             skip(f"unsupported type: {exc}")
@@ -643,8 +735,8 @@ class RouterScanner:
             deprecated=deprecated,
             response_filter=response_filter,
             domains=domains_for(str_tags, route.path),
-            scan_degraded_reason=(
-                "; ".join(degraded_reasons) if degraded_reasons else None
+            output=_classify_output(
+                response_annotation, response_filter, typevar_response, param_reasons
             ),
         )
 

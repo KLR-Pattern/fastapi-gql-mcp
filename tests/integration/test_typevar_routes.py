@@ -132,6 +132,14 @@ class TestUnboundedFallback:
         # the parameterize guidance rides along
         assert any("parameterize" in r for r in reasons), reasons
 
+        # the SDL note carries the REAL reason (single-classifier fix): a
+        # TypeVar-degraded route must not point agents at "add a return
+        # annotation" guidance for an endpoint that declares one.
+        sdl = handler.get_sdl()
+        out_line = next(ln for ln in sdl.splitlines() if "out:" in ln and "JSON" in ln)
+        assert "unbound TypeVar" in out_line, out_line
+        assert "declares no response type" not in sdl
+
         # and the degraded routes still execute end to end
         result = await handler.execute("{ t { out } }")
         assert result == {"data": {"t": {"out": [{"anything": 1}]}}}, result
