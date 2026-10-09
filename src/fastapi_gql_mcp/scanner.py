@@ -296,6 +296,32 @@ def _param_required(field_info: FieldInfo) -> bool:
         return field_info.default is None
 
 
+def _make_param(
+    name: str,
+    annotation: Any,
+    required: bool,
+    default: Any = None,
+    *,
+    raw_name: str = "",
+    description: str | None = None,
+    embed: bool = False,
+) -> ParamInfo:
+    """The single ParamInfo constructor — and the single gname producer:
+    the GraphQL argument name is the sanitized wire name, computed exactly
+    here so scan-time and schema-time can never disagree."""
+    gname = sanitize_graphql_name(name, what="argument name")
+    return ParamInfo(
+        name=name,
+        annotation=annotation,
+        required=required,
+        default=None if required else default,
+        embed=embed,
+        raw_name=raw_name,
+        description=description,
+        gname="" if gname == name else gname,
+    )
+
+
 def _expand_query_model(model: type[BaseModel]) -> list[ParamInfo]:
     """Flatten a Query Parameter Model into individual query params.
 
@@ -305,18 +331,15 @@ def _expand_query_model(model: type[BaseModel]) -> list[ParamInfo]:
     """
     params: list[ParamInfo] = []
     for field_name, info in model.model_fields.items():
-        request_name = request_wire_name(info, field_name)
-        gname = sanitize_graphql_name(request_name, what="argument name")
         required = bool(info.is_required())
         params.append(
-            ParamInfo(
-                name=request_name,
-                annotation=info.annotation,
-                required=required,
-                default=None if required else info.get_default(call_default_factory=False),
+            _make_param(
+                request_wire_name(info, field_name),
+                info.annotation,
+                required,
+                info.get_default(call_default_factory=False),
                 raw_name=field_name,
                 description=info.description,
-                gname="" if gname == request_name else gname,
             )
         )
     return params
@@ -324,33 +347,35 @@ def _expand_query_model(model: type[BaseModel]) -> list[ParamInfo]:
 
 def _to_param_info(model_field: Any, *, path_param: bool = False) -> ParamInfo:
     field_info: FieldInfo = model_field.field_info
-    annotation = field_info.annotation
     # Request-side name: FastAPI validates against validation_alias/alias/name.
     # FastAPI's ModelField.validation_alias is str-only and .alias already
     # falls back to the field name — no AliasChoices flattening applies here.
-    name = _mf_wire(model_field)
-    # The GraphQL argument name must be a legal identifier; when sanitizing
-    # changes it, the schema uses the sanitized name and the resolver
-    # translates it back to the wire name.
-    gname = sanitize_graphql_name(name, what="argument name")
     required = path_param or _param_required(field_info)
-    return ParamInfo(
-        name=name,
-        annotation=annotation,
-        required=required,
-        default=None
-        if required
-        else field_info.get_default(call_default_factory=False),
-        embed=bool(getattr(field_info, "embed", False)),
+    return _make_param(
+        _mf_wire(model_field),
+        field_info.annotation,
+        required,
+        field_info.get_default(call_default_factory=False),
         raw_name=model_field.name,
         description=getattr(field_info, "description", None),
-        gname="" if gname == name else gname,
+        embed=bool(getattr(field_info, "embed", False)),
     )
 
 
-def _flatten_params(
-    dependant: Dependant,
-) -> tuple[list[Any], list[Any], list[Any], list[Any], list[Any]]:
+@dataclass(frozen=True)
+class _FlatParams:
+    """One route's FastAPI params by location (name-deduped ModelFields).
+    Header/cookie entries exist only for the required-parameter gate — they
+    never become GraphQL arguments."""
+
+    path: tuple[Any, ...]
+    query: tuple[Any, ...]
+    header: tuple[Any, ...]
+    cookie: tuple[Any, ...]
+    body: tuple[Any, ...]
+
+
+def _flatten_params(dependant: Dependant) -> _FlatParams:
     """Walk the dependency tree collecting params by location (name-deduped)."""
     path_params: list[Any] = []
     query_params: list[Any] = []
@@ -378,12 +403,12 @@ def _flatten_params(
             by_name.setdefault(name, p)
         return list(by_name.values())
 
-    return (
-        dedup(path_params),
-        dedup(query_params),
-        dedup(header_params),
-        dedup(cookie_params),
-        dedup(body_params),
+    return _FlatParams(
+        path=tuple(dedup(path_params)),
+        query=tuple(dedup(query_params)),
+        header=tuple(dedup(header_params)),
+        cookie=tuple(dedup(cookie_params)),
+        body=tuple(dedup(body_params)),
     )
 
 
@@ -396,6 +421,166 @@ def _body_embeds(body_params: Sequence[ParamInfo]) -> bool:
     if len({p.name for p in body_params}) > 1:
         return True
     return bool(body_params[0].embed)
+
+def _response_annotation(route: Any) -> Any:
+    response_model = route.response_model
+    # Both an explicit response_model=None (Response-returning routes) and
+    # the DefaultPlaceholder (unset) fall back to the typed return annotation.
+    if response_model is None or isinstance(response_model, DefaultPlaceholder):
+        raw = inspect.signature(route.endpoint).return_annotation
+        # `-> None` (and its string form under future-annotations) is an
+        # EXPLICIT "no response body" contract — bridged as a Boolean
+        # success field. No annotation at all still bridges, as the JSON
+        # scalar via the Any marker: available rather than skipped, and
+        # flagged in the degraded-routes startup notice so an annotation
+        # lost to refactoring stays visible.
+        if raw is None or raw == "None":
+            return type(None)
+        typed = get_typed_return_annotation(route.endpoint)
+        return Any if typed is None else typed
+    return response_model
+
+
+# --------------------------------------------------------------- input gates
+
+
+def _required_header_cookie_reason(flat: _FlatParams) -> str | None:
+    for p in flat.header + flat.cookie:
+        if _param_required(p.field_info):
+            return (
+                f"required header/cookie parameter "
+                f"'{_mf_wire(p)}' cannot be a GraphQL "
+                f"argument — make it optional (caller credentials ride "
+                f"passthrough_headers instead of GraphQL arguments)"
+            )
+    return None
+
+
+def _path_model_reason(path_p: tuple[Any, ...]) -> str | None:
+    for p in path_p:
+        annotation = p.field_info.annotation
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            return (
+                f"path parameter model '{annotation.__name__}' is not supported "
+                f"— use scalar path parameters (str/int/uuid) and accept the "
+                f"model inside the handler"
+            )
+    return None
+
+
+def _mixed_query_model_reason(query_p: tuple[Any, ...]) -> str | None:
+    for p in query_p:
+        annotation = p.field_info.annotation
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            # FastAPI flattens a LONE BaseModel query param ("Query
+            # Parameter Models") into individual query keys on the wire;
+            # a model mixed with plain query params has no such shape.
+            if len(query_p) != 1:
+                return (
+                    f"query parameter model '{annotation.__name__}' mixed with "
+                    f"plain query parameters is not supported — move the "
+                    f"plain parameters into the model (FastAPI itself "
+                    f"rejects the mixed form on the wire)"
+                )
+    return None
+
+
+def _body_shape_reason(body_p: tuple[Any, ...]) -> str | None:
+    for p in body_p:
+        # Form/File bodies are deliberately not bridged: the invoker
+        # speaks JSON, and MCP tool arguments have no file channel
+        # (SEP-2631 is the protocol-level fix, still draft). Skip must
+        # happen HERE — a Form-only scalar annotation (str/int/...) is a
+        # perfectly valid GraphQL input, so a type check would let the
+        # route through into a field that always 422s.
+        if isinstance(p.field_info, Form | File):
+            return (
+                f"form/file parameter '{_mf_wire(p)}' cannot be bridged "
+                f"(the invoker sends JSON bodies only) — the route stays "
+                f"available over plain HTTP"
+            )
+        if p.field_info.annotation is None:
+            return (
+                "body parameter without a typed annotation — annotate it "
+                "(e.g. payload: MyModel)"
+            )
+    return None
+
+
+def _unmappable_response_reason(response_annotation: Any) -> str | None:
+    if isinstance(response_annotation, type) and issubclass(
+        response_annotation, Response
+    ):
+        return (
+            "returns a raw Response object, no typed body to expose "
+            "— return a typed model (or add response_model) instead"
+        )
+    return None
+
+
+def _route_params(
+    flat: _FlatParams,
+) -> tuple[list[ParamInfo], list[ParamInfo], list[ParamInfo]]:
+    """(query, path, body) ParamInfos, with body embedding resolved here —
+    the single place a route's input plan takes shape."""
+    q = flat.query
+    query_params = (
+        _expand_query_model(q[0].field_info.annotation)
+        if len(q) == 1
+        and isinstance(q[0].field_info.annotation, type)
+        and issubclass(q[0].field_info.annotation, BaseModel)
+        else [_to_param_info(p) for p in q]
+    )
+    path_params = [_to_param_info(p, path_param=True) for p in flat.path]
+    body_params = [_to_param_info(p) for p in flat.body]
+    if body_params and _body_embeds(body_params):
+        body_params = [replace(p, embed=True) for p in body_params]
+    return query_params, path_params, body_params
+
+
+def _trial_route_types(
+    types: TypeBuilder,
+    route_path: str,
+    response_annotation: Any,
+    *,
+    skip_response: bool,
+    params_lists: tuple[list[ParamInfo], ...],
+) -> tuple[Any, str | None, list[str]]:
+    """Trial-build every type this route needs. An unbound TypeVar at a
+    route boundary degrades THIS route to raw JSON (still callable,
+    audited) — the same fallback a TypeVar field already gets inside a
+    model. Anything else unmappable re-raises so the caller can skip the
+    route: no fallback can express that shape (e.g. `-> bytes`). Filtered
+    responses bypass the structured type entirely (the JSON scalar carries
+    whatever arrives); only their INPUT types are trialed.
+
+    Returns (rewritten annotation, response TypeVar reason, param reasons).
+    """
+    typevar_response: str | None = None
+    param_reasons: list[str] = []
+    if not skip_response:
+        try:
+            types.output_type(
+                response_annotation, context=f"response of {route_path}"
+            )
+        except UnsupportedFieldTypeError as exc:
+            if not isinstance(exc.annotation, TypeVar):
+                raise
+            typevar_response = exc.field_reason or exc.context
+            response_annotation = Any
+    for params in params_lists:
+        for i, param in enumerate(params):
+            try:
+                types.input_type(
+                    param.annotation,
+                    context=f"parameter '{param.name}' of {route_path}",
+                )
+            except UnsupportedFieldTypeError as exc:
+                if not isinstance(exc.annotation, TypeVar):
+                    raise
+                param_reasons.append(exc.field_reason or exc.context)
+                params[i] = replace(param, annotation=Any)
+    return response_annotation, typevar_response, param_reasons
 
 
 def _matches(path: str, patterns: Sequence[str] | None) -> bool:
@@ -587,136 +772,40 @@ class RouterScanner:
         types: TypeBuilder,
         skips: list[SkipRecord],
     ) -> RouteInfo | None:
-        # OpenAPI allows Enum tags; only string tags participate (domain
-        # grouping below applies the same rule).
         str_tags = tuple(t for t in route.tags or () if isinstance(t, str))
 
         def skip(reason: str) -> None:
             skips.append(SkipRecord(route.path, method, reason, tags=str_tags))
 
         flat = _flatten_params(route.dependant)
-        path_p, query_p, header_p, cookie_p, body_p = flat
-
-        for p in header_p + cookie_p:
-            if _param_required(p.field_info):
-                skip(
-                    f"required header/cookie parameter "
-                    f"'{_mf_wire(p)}' cannot be a GraphQL "
-                    f"argument — make it optional (caller credentials ride "
-                    f"passthrough_headers instead of GraphQL arguments)"
-                )
+        response_annotation = _response_annotation(route)
+        for reason in (
+            _required_header_cookie_reason(flat),
+            _path_model_reason(flat.path),
+            _mixed_query_model_reason(flat.query),
+            _body_shape_reason(flat.body),
+            _unmappable_response_reason(response_annotation),
+        ):
+            if reason is not None:
+                skip(reason)
                 return None
 
-        for p in path_p:
-            annotation = p.field_info.annotation
-            if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-                skip(
-                f"path parameter model '{annotation.__name__}' is not supported "
-                f"— use scalar path parameters (str/int/uuid) and accept the "
-                f"model inside the handler"
-            )
-                return None
-        for p in query_p:
-            annotation = p.field_info.annotation
-            if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-                # FastAPI flattens a LONE BaseModel query param ("Query
-                # Parameter Models") into individual query keys on the wire;
-                # a model mixed with plain query params has no such shape.
-                if len(query_p) != 1:
-                    skip(
-                        f"query parameter model '{annotation.__name__}' mixed with "
-                        f"plain query parameters is not supported — move the "
-                        f"plain parameters into the model (FastAPI itself "
-                        f"rejects the mixed form on the wire)"
-                    )
-                    return None
-        for p in body_p:
-            # Form/File bodies are deliberately not bridged: the invoker
-            # speaks JSON, and MCP tool arguments have no file channel
-            # (SEP-2631 is the protocol-level fix, still draft). Skip must
-            # happen HERE — a Form-only scalar annotation (str/int/...) is a
-            # perfectly valid GraphQL input, so the type check below would
-            # let the route through into a field that always 422s.
-            if isinstance(p.field_info, Form | File):
-                name = _mf_wire(p)
-                skip(
-                    f"form/file parameter '{name}' cannot be bridged "
-                    f"(the invoker sends JSON bodies only) — the route stays "
-                    f"available over plain HTTP"
-                )
-                return None
-            annotation = p.field_info.annotation
-            if annotation is None:
-                skip(
-                "body parameter without a typed annotation — annotate it "
-                "(e.g. payload: MyModel)"
-            )
-                return None
-
-        response_annotation = self._response_annotation(route)
-        if response_annotation is None:
-            skip(
-                "no typed response (response_model or return annotation required) "
-                "— return a typed model or set response_model"
-            )
-            return None
-        if isinstance(response_annotation, type) and issubclass(response_annotation, Response):
-            skip(
-                "returns a raw Response object, no typed body to expose "
-                "— return a typed model (or add response_model) instead"
-            )
-            return None
-
-        query_params = (
-            _expand_query_model(query_p[0].field_info.annotation)
-            if len(query_p) == 1
-            and isinstance(query_p[0].field_info.annotation, type)
-            and issubclass(query_p[0].field_info.annotation, BaseModel)
-            else [_to_param_info(p) for p in query_p]
-        )
-
-        path_params = [_to_param_info(p, path_param=True) for p in path_p]
-        body_params = [_to_param_info(p) for p in body_p]
-
-        # Filtered responses bypass the structured type entirely (the JSON
-        # scalar carries whatever arrives); only their INPUT types are trialed.
+        query_params, path_params, body_params = _route_params(flat)
         response_filter = response_filter_kwarg(route)
-        is_void = response_annotation is type(None)
-        # An unbound TypeVar at a route boundary degrades THIS route to raw
-        # JSON (still callable, audited) — the same fallback a TypeVar field
-        # already gets inside a model. Anything else unmappable keeps the
-        # skip: no fallback can express that shape (e.g. `-> bytes`).
-        typevar_response: str | None = None
-        param_reasons: list[str] = []
         try:
-            if response_filter is None and not is_void:
-                try:
-                    types.output_type(
-                        response_annotation, context=f"response of {route.path}"
-                    )
-                except UnsupportedFieldTypeError as exc:
-                    if not isinstance(exc.annotation, TypeVar):
-                        raise
-                    typevar_response = exc.field_reason or exc.context
-                    response_annotation = Any
-            for params in (path_params, query_params, body_params):
-                for i, param in enumerate(params):
-                    try:
-                        types.input_type(
-                            param.annotation,
-                            context=f"parameter '{param.name}' of {route.path}",
-                        )
-                    except UnsupportedFieldTypeError as exc:
-                        if not isinstance(exc.annotation, TypeVar):
-                            raise
-                        param_reasons.append(exc.field_reason or exc.context)
-                        params[i] = replace(param, annotation=Any)
+            response_annotation, typevar_response, param_reasons = _trial_route_types(
+                types,
+                route.path,
+                response_annotation,
+                skip_response=(
+                    response_filter is not None
+                    or response_annotation is type(None)
+                ),
+                params_lists=(path_params, query_params, body_params),
+            )
         except UnsupportedFieldTypeError as exc:
             skip(f"unsupported type: {exc}")
             return None
-
-        if body_params and _body_embeds(body_params):
-            body_params = [replace(p, embed=True) for p in body_params]
 
         description = route.summary or route.description or None
         # OpenAPI's `deprecated: true` becomes GraphQL-native deprecation.
@@ -740,21 +829,3 @@ class RouterScanner:
             ),
         )
 
-    @staticmethod
-    def _response_annotation(route: Any) -> Any:
-        response_model = route.response_model
-        # Both an explicit response_model=None (Response-returning routes) and
-        # the DefaultPlaceholder (unset) fall back to the typed return annotation.
-        if response_model is None or isinstance(response_model, DefaultPlaceholder):
-            raw = inspect.signature(route.endpoint).return_annotation
-            # `-> None` (and its string form under future-annotations) is an
-            # EXPLICIT "no response body" contract — bridged as a Boolean
-            # success field. No annotation at all still bridges, as the JSON
-            # scalar via the Any marker: available rather than skipped, and
-            # flagged in the degraded-routes startup notice so an annotation
-            # lost to refactoring stays visible.
-            if raw is None or raw == "None":
-                return type(None)
-            typed = get_typed_return_annotation(route.endpoint)
-            return Any if typed is None else typed
-        return response_model
