@@ -40,9 +40,16 @@ def _unwrap(field_type: Any) -> Any:
     return field_type
 
 
-# Implementation ceiling for the unrolled document, not a data limit:
-# validation recurses over the document (~2 frames per level), so this
-# must fit Python's default recursion budget with room to spare.
+# Implementation ceiling for the unrolled document, not a data limit.
+# Measured under Python's default recursion limit (1000 frames):
+# - through the real app (FastAPI/pydantic serialization) trees die at ~90 levels
+# - pure graphql-core projection (dict injection, serialization bypassed) dies
+#   at ~82 — it burns ~8 frames per level itself, so no stage is "the" chokepoint;
+#   the universal constraint is recursion budget / per-level frame cost
+# - raising sys.setrecursionlimit lifts every ceiling proportionally
+#   (1000-level trees verified at limit 20000; this limit must scale with it)
+# 100 therefore sits at the real-world ceiling while keeping the validation
+# recursion (~2 frames per unrolled level) inside the default budget.
 UNROLL_LIMIT = 100
 
 
