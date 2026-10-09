@@ -166,7 +166,7 @@ def _union_json_bridge(annotation: Any) -> tuple[str, str] | None:
     return names, note
 
 
-def _note(description: str | None, note: str) -> str:
+def append_note(description: str | None, note: str) -> str:
     return f"{description}\n\n{note}" if description else note
 
 
@@ -210,7 +210,7 @@ def _normalize_typevar(annotation: Any) -> Any:
     return annotation
 
 
-def _first_wire_name(raw: Any, fallback: str) -> str:
+def first_wire_name(raw: Any, fallback: str) -> str:
     """A non-str alias (pydantic ``AliasChoices``) still names real wire
     keys; FastAPI accepts any of them, so one canonical name — the first
     string choice — is enough."""
@@ -218,6 +218,33 @@ def _first_wire_name(raw: Any, fallback: str) -> str:
         if isinstance(choice, str) and choice:
             return choice
     return fallback
+
+
+def request_wire_name(info: FieldInfo, field_name: str) -> str:
+    """The wire key FastAPI VALIDATES a body/query-model field by:
+    validation_alias, else alias, else the field name. A non-str alias
+    (pydantic ``AliasChoices``) still names real wire keys — one canonical
+    name, the first string choice, is enough."""
+    raw = info.validation_alias or info.alias or field_name
+    return raw if isinstance(raw, str) else first_wire_name(raw, field_name)
+
+
+def output_wire_name(info: FieldInfo, field_name: str) -> str:
+    """The wire key FastAPI SERIALIZES a response field by: serialization_
+    alias, else alias, else the field name. AliasChoices has no single
+    serialization key, so it falls back to the field name (FastAPI
+    serializes unaliased output by field name too)."""
+    raw = info.serialization_alias or info.alias or field_name
+    return raw if isinstance(raw, str) else field_name
+
+
+def graphql_default(default: Any) -> Any:
+    """A GraphQL argument default must be a JSON literal; anything else
+    (enums, datetimes, factories) stays Undefined and FastAPI materializes
+    it when the argument is absent."""
+    if default is None or isinstance(default, str | int | float | bool):
+        return default
+    return Undefined
 
 
 def sanitize_graphql_name(name: str, *, what: str = "name") -> str:
@@ -690,20 +717,18 @@ class TypeBuilder:
                 continue
             # FastAPI serializes responses by alias, so GraphQL field names must
             # match the JSON keys the resolver will actually see.
-            json_name = info.serialization_alias or info.alias or field_name
-            if not isinstance(json_name, str):
-                json_name = field_name
+            json_name = output_wire_name(info, field_name)
             gname = sanitize_graphql_name(json_name, what=f"{model.__name__} field")
             annotation = resolve_annotation(info.annotation, ns)
             context = f"{model.__name__}.{field_name}"
             gtype, degraded = self._degradable_output_type(annotation, context)
             description = _field_description(info, annotation)
             if degraded is not None:
-                description = _note(description, _degraded_field_note(degraded))
+                description = append_note(description, _degraded_field_note(degraded))
                 self._record_degraded(f"{model.__name__}.{field_name}", degraded)
             elif (bridge := _union_json_bridge(annotation)) is not None:
                 reason, note = bridge
-                description = _note(description, note)
+                description = append_note(description, note)
                 # Surfaced by the scanner's startup log: the model's owner can
                 # regain field selection by restructuring the union away.
                 self._record_degraded(f"{model.__name__}.{field_name}", reason)
@@ -833,12 +858,7 @@ class TypeBuilder:
         fields: dict[str, GraphQLInputField] = {}
         ns = _model_namespace(model)
         for field_name, info in model.model_fields.items():
-            # FastAPI validates bodies against validation_alias/alias/name;
-            # AliasPath/AliasChoices are too rich for a flat GraphQL name, so
-            # those fall back to the field name.
-            req_name = info.validation_alias or info.alias or field_name
-            if not isinstance(req_name, str):
-                req_name = _first_wire_name(req_name, field_name)
+            req_name = request_wire_name(info, field_name)
             gname = sanitize_graphql_name(req_name, what=f"{model.__name__} input field")
             if gname != req_name:
                 self._input_wire_map.setdefault(model, {})[gname] = req_name
@@ -851,28 +871,23 @@ class TypeBuilder:
             )
             description = _field_description(info, annotation)
             if degraded is not None:
-                description = _note(description, _degraded_field_note(degraded))
+                description = append_note(description, _degraded_field_note(degraded))
                 self._record_degraded(f"{model.__name__}.{field_name}", degraded)
             elif (bridge := _union_json_bridge(annotation)) is not None:
                 reason, note = bridge
-                description = _note(description, note)
+                description = append_note(description, note)
                 self._record_degraded(f"{model.__name__}.{field_name}", reason)
             fields[gname] = GraphQLInputField(
                 gtype,
                 description=description,
-                default_value=self._input_default(info),
+                default_value=graphql_default(
+                    info.get_default(call_default_factory=False)
+                ),
             )
         if not fields:
             reason = f"{model.__name__} has no usable input fields"
             raise UnsupportedFieldTypeError(model, reason, field_reason=reason)
         return fields
-
-    @staticmethod
-    def _input_default(info: FieldInfo) -> Any:
-        default = info.get_default(call_default_factory=False)
-        if default is None or isinstance(default, str | int | float | bool):
-            return default
-        return Undefined
 
     # -------------------------------------------------------------- typeddict
 
@@ -893,11 +908,11 @@ class TypeBuilder:
             )
             description = describe_literal_values(annotation)
             if degraded is not None:
-                description = _note(description, _degraded_field_note(degraded))
+                description = append_note(description, _degraded_field_note(degraded))
                 self._record_degraded(f"{td.__name__}.{field_name}", degraded)
             elif (bridge := _union_json_bridge(annotation)) is not None:
                 reason, note = bridge
-                description = _note(description, note)
+                description = append_note(description, note)
                 self._record_degraded(f"{td.__name__}.{field_name}", reason)
             if gname != field_name:
                 fields[gname] = GraphQLField(
@@ -931,11 +946,11 @@ class TypeBuilder:
             )
             description = describe_literal_values(annotation)
             if degraded is not None:
-                description = _note(description, _degraded_field_note(degraded))
+                description = append_note(description, _degraded_field_note(degraded))
                 self._record_degraded(f"{td.__name__}.{field_name}", degraded)
             elif (bridge := _union_json_bridge(annotation)) is not None:
                 reason, note = bridge
-                description = _note(description, note)
+                description = append_note(description, note)
                 self._record_degraded(f"{td.__name__}.{field_name}", reason)
             fields[gname] = GraphQLInputField(gtype, description=description)
         if not fields:
@@ -974,11 +989,11 @@ class TypeBuilder:
             )
             description = describe_literal_values(annotation)
             if degraded is not None:
-                description = _note(description, _degraded_field_note(degraded))
+                description = append_note(description, _degraded_field_note(degraded))
                 self._record_degraded(f"{dc.__name__}.{f.name}", degraded)
             elif (bridge := _union_json_bridge(annotation)) is not None:
                 reason, note = bridge
-                description = _note(description, note)
+                description = append_note(description, note)
                 self._record_degraded(f"{dc.__name__}.{f.name}", reason)
             fields[gname] = GraphQLField(gtype, description=description)
         if not fields:
@@ -1009,18 +1024,15 @@ class TypeBuilder:
             )
             description = describe_literal_values(annotation)
             if degraded is not None:
-                description = _note(description, _degraded_field_note(degraded))
+                description = append_note(description, _degraded_field_note(degraded))
                 self._record_degraded(f"{dc.__name__}.{f.name}", degraded)
             elif (bridge := _union_json_bridge(annotation)) is not None:
                 reason, note = bridge
-                description = _note(description, note)
+                description = append_note(description, note)
                 self._record_degraded(f"{dc.__name__}.{f.name}", reason)
             default: Any = Undefined
             if not required and f.default is not MISSING:
-                if f.default is None or isinstance(
-                    f.default, str | int | float | bool
-                ):
-                    default = f.default
+                default = graphql_default(f.default)
             fields[gname] = GraphQLInputField(
                 gtype, description=description, default_value=default
             )

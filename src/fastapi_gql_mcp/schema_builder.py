@@ -36,7 +36,9 @@ from fastapi_gql_mcp.scalars import GraphQLJSON
 from fastapi_gql_mcp.scanner import ParamInfo, RouteInfo
 from fastapi_gql_mcp.type_builder import (
     TypeBuilder,
+    append_note,
     describe_literal_values,
+    graphql_default,
     union_member_names,
     union_members,
 )
@@ -58,14 +60,8 @@ def _argument(param: ParamInfo, types: TypeBuilder, route: RouteInfo) -> GraphQL
         types.input_type(param.annotation, context=f"parameter '{param.name}' of {route.path}"),
     )
     gtype: Any = GraphQLNonNull(bare) if param.required else bare
-    default = Undefined if param.required else _graphql_default(param.default)
+    default = Undefined if param.required else graphql_default(param.default)
     return GraphQLArgument(gtype, default_value=default, description=param.description)
-
-
-def _graphql_default(default: Any) -> Any:
-    if default is None or isinstance(default, bool | int | float | str):
-        return default
-    return Undefined
 
 
 def _arguments(route: RouteInfo, types: TypeBuilder) -> dict[str, GraphQLArgument]:
@@ -122,7 +118,7 @@ def _leaf_field(
             "Returns true on success — this route has no response body "
             "(-> None / 204); failures surface as field errors."
         )
-        description = f"{description}\n\n{note}" if description else note
+        description = append_note(description, note)
         base_resolve = _resolver(route, invoker)
 
         async def void_resolve(_root: Any, _info: Any, **kwargs: Any) -> bool:
@@ -148,7 +144,7 @@ def _leaf_field(
             "Add a return annotation or response_model for a structured, "
             "field-selectable type."
         )
-        description = f"{description}\n\n{note}" if description else note
+        description = append_note(description, note)
         return GraphQLField(
             GraphQLJSON,
             args=_arguments(route, types),

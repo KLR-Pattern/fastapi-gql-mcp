@@ -30,9 +30,9 @@ from fastapi_gql_mcp.naming import field_name_for
 from fastapi_gql_mcp.type_builder import (
     TypeBuilder,
     UnsupportedFieldTypeError,
-    _first_wire_name,
+    request_wire_name,
     sanitize_graphql_name,
-    union_members,
+    union_member_names,
 )
 
 logger = logging.getLogger(__name__)
@@ -153,13 +153,13 @@ class ReadinessReport:
         return not (self.skips or self.degraded or self.degraded_fields)
 
 
-def _readiness_report(
+def build_readiness_report(
     routes: Sequence[RouteInfo], skips: Sequence[SkipRecord], types: TypeBuilder
 ) -> ReadinessReport:
     """Assemble the report from one scan's three products — the single
     source shared by ``RouterScanner.readiness()`` and
-    ``RouterGraphQLHandler.readiness()``. Internal on purpose: callers
-    asking for a report should never need scan's intermediates."""
+    ``RouterGraphQLHandler.readiness()``. Package-level (not exported):
+    callers asking for a report should never need scan's intermediates."""
     return ReadinessReport(
         skips=tuple(skips),
         degraded=tuple(
@@ -184,13 +184,18 @@ def _degraded_reason(route: RouteInfo) -> str | None:
         )
     if route.response_filter:
         return f"response filtered via {route.response_filter}"
-    if (members := union_members(route.response_annotation)) is not None:
-        names = "|".join(getattr(m, "__name__", str(m)) for m in members)
+    if (names := union_member_names(route.response_annotation)):
         return (
-            f"union response ({names}) — restructure into one model "
+            f"union response ({'|'.join(names)}) — restructure into one model "
             "per shape to regain field selection"
         )
     return None
+
+
+def _mf_wire(p: Any) -> str:
+    """Wire name of a FastAPI ModelField: validation_alias, else alias, else
+    the field name (the same precedence FastAPI validates by)."""
+    return str(p.validation_alias or p.alias or p.name)
 
 
 def _param_required(field_info: FieldInfo) -> bool:
@@ -209,12 +214,7 @@ def _expand_query_model(model: type[BaseModel]) -> list[ParamInfo]:
     """
     params: list[ParamInfo] = []
     for field_name, info in model.model_fields.items():
-        request_name: str = field_name
-        raw = info.validation_alias or info.alias
-        if isinstance(raw, str) and raw:
-            request_name = raw
-        elif raw is not None:
-            request_name = _first_wire_name(raw, field_name)
+        request_name = request_wire_name(info, field_name)
         gname = sanitize_graphql_name(request_name, what="argument name")
         required = bool(info.is_required())
         params.append(
@@ -234,12 +234,10 @@ def _expand_query_model(model: type[BaseModel]) -> list[ParamInfo]:
 def _to_param_info(model_field: Any, *, path_param: bool = False) -> ParamInfo:
     field_info: FieldInfo = model_field.field_info
     annotation = field_info.annotation
-    # Request-side name: FastAPI validates against validation_alias/alias/name
-    # (AliasChoices yields its first string choice — FastAPI accepts any).
-    raw = model_field.validation_alias or model_field.alias
-    name = raw if isinstance(raw, str) and raw else model_field.name
-    if not (isinstance(raw, str) and raw):
-        name = _first_wire_name(raw, model_field.name)
+    # Request-side name: FastAPI validates against validation_alias/alias/name.
+    # FastAPI's ModelField.validation_alias is str-only and .alias already
+    # falls back to the field name — no AliasChoices flattening applies here.
+    name = _mf_wire(model_field)
     # The GraphQL argument name must be a legal identifier; when sanitizing
     # changes it, the schema uses the sanitized name and the resolver
     # translates it back to the wire name.
@@ -249,7 +247,9 @@ def _to_param_info(model_field: Any, *, path_param: bool = False) -> ParamInfo:
         name=name,
         annotation=annotation,
         required=required,
-        default=None if required else field_info.default,
+        default=None
+        if required
+        else field_info.get_default(call_default_factory=False),
         embed=bool(getattr(field_info, "embed", False)),
         raw_name=model_field.name,
         description=getattr(field_info, "description", None),
@@ -283,7 +283,7 @@ def _flatten_params(
     def dedup(params: list[Any]) -> list[Any]:
         by_name: dict[str, Any] = {}
         for p in params:
-            name = p.validation_alias or p.alias or p.name
+            name = _mf_wire(p)
             by_name.setdefault(name, p)
         return list(by_name.values())
 
@@ -485,7 +485,7 @@ class RouterScanner:
         the report reflects what IT would expose."""
         types = TypeBuilder()
         routes, skips = self.scan(types)
-        return _readiness_report(routes, skips, types)
+        return build_readiness_report(routes, skips, types)
 
     # ----------------------------------------------------------------- helpers
 
@@ -510,7 +510,7 @@ class RouterScanner:
             if _param_required(p.field_info):
                 skip(
                     f"required header/cookie parameter "
-                    f"'{p.validation_alias or p.alias or p.name}' cannot be a GraphQL "
+                    f"'{_mf_wire(p)}' cannot be a GraphQL "
                     f"argument — make it optional (caller credentials ride "
                     f"passthrough_headers instead of GraphQL arguments)"
                 )
@@ -547,7 +547,7 @@ class RouterScanner:
             # perfectly valid GraphQL input, so the type check below would
             # let the route through into a field that always 422s.
             if isinstance(p.field_info, Form | File):
-                name = p.validation_alias or p.alias or p.name
+                name = _mf_wire(p)
                 skip(
                     f"form/file parameter '{name}' cannot be bridged "
                     f"(the invoker sends JSON bodies only) — the route stays "

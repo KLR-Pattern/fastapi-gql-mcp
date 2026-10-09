@@ -37,7 +37,7 @@ from fastapi_gql_mcp.scanner import (
     RouteInfo,
     RouterScanner,
     SkipRecord,
-    _readiness_report,
+    build_readiness_report,
 )
 from fastapi_gql_mcp.schema_builder import GQLMCPConfigError, SchemaBuilder
 from fastapi_gql_mcp.type_builder import TypeBuilder
@@ -152,7 +152,7 @@ class RouterGraphQLHandler:
         re-scan, no re-build): skipped routes, raw-JSON bridges, degraded
         model fields. ``RouterScanner(app).readiness()`` runs the same
         audit standalone, without constructing a handler."""
-        return _readiness_report(self._routes, self._skips, self._types)
+        return build_readiness_report(self._routes, self._skips, self._types)
 
     @property
     def invoker(self) -> RouteInvoker:

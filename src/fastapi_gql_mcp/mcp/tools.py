@@ -31,8 +31,8 @@ _HINT_AFTER_SCHEMA = (
 
 # MCP spec tool annotations: agents use these hints to decide when a call
 # is safe (e.g. auto-run read-only tools, confirm destructive ones).
-_READ_ONLY = ToolAnnotations(read_only_hint=True)
-_DESTRUCTIVE = ToolAnnotations(destructive_hint=True)
+READ_ONLY = ToolAnnotations(read_only_hint=True)
+DESTRUCTIVE = ToolAnnotations(destructive_hint=True)
 
 
 def register_executor_tools(
@@ -40,7 +40,7 @@ def register_executor_tools(
 ) -> None:
     """Register graphql_query (+ graphql_mutation) on a FastMCP."""
 
-    @mcp.tool(annotations=_READ_ONLY)
+    @mcp.tool(annotations=READ_ONLY)
     async def graphql_query(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
         """Execute a GraphQL query against the app's routes.
 
@@ -64,7 +64,7 @@ def register_executor_tools(
 
     if allow_mutation:
 
-        @mcp.tool(annotations=_DESTRUCTIVE)
+        @mcp.tool(annotations=DESTRUCTIVE)
         async def graphql_mutation(
             mutation: str, variables: dict[str, Any] | None = None
         ) -> dict[str, Any]:
@@ -86,7 +86,7 @@ def register_simple_tools(
 ) -> None:
     """Register get_schema + executor tools (small apps, one-shot discovery)."""
 
-    @mcp.tool(annotations=_READ_ONLY)
+    @mcp.tool(annotations=READ_ONLY)
     def get_schema() -> dict[str, Any]:
         """Get the complete GraphQL schema of this FastAPI app, in SDL format.
 

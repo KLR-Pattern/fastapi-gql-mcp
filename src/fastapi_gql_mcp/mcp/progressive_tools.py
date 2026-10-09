@@ -31,7 +31,8 @@ from fastapi_gql_mcp.mcp.errors import (
     create_error_response,
     create_success_response,
 )
-from fastapi_gql_mcp.mcp.tools import _READ_ONLY, register_executor_tools
+from fastapi_gql_mcp.mcp.tools import READ_ONLY, register_executor_tools
+from fastapi_gql_mcp.recursive_expand import unwrap
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -61,10 +62,6 @@ def _field_brief(name: str, field: Any) -> dict[str, Any]:
     }
 
 
-def _unwrap(obj: Any) -> Any:
-    return obj.of_type if isinstance(obj, GraphQLNonNull) else obj
-
-
 def _walk_group(root_type: Any, path: tuple[str, ...]) -> GraphQLObjectType | None:
     """The group object type sitting at ``path`` under a root operation type."""
     current: Any = root_type
@@ -74,7 +71,7 @@ def _walk_group(root_type: Any, path: tuple[str, ...]) -> GraphQLObjectType | No
         field = current.fields.get(seg)
         if field is None:
             return None
-        current = _unwrap(field.type)
+        current = unwrap(field.type)
     return current if isinstance(current, GraphQLObjectType) else None
 
 
@@ -147,7 +144,7 @@ def register_progressive_tools(
             return None
         return path
 
-    @mcp.tool(annotations=_READ_ONLY)
+    @mcp.tool(annotations=READ_ONLY)
     def list_domains() -> dict[str, Any]:
         """List the API's domains (derived from route tags) with operation counts.
 
@@ -171,7 +168,7 @@ def register_progressive_tools(
     # computed once and reused — agents re-explore the same domain often.
     sdl_cache: dict[tuple[str, ...], str] = {}
 
-    @mcp.tool(annotations=_READ_ONLY)
+    @mcp.tool(annotations=READ_ONLY)
     def list_queries(domain: str) -> dict[str, Any]:
         """List the read (Query) operations of one domain.
 
@@ -203,7 +200,7 @@ def register_progressive_tools(
 
         mutation_index = handler.mutation_fields
 
-        @mcp.tool(annotations=_READ_ONLY)
+        @mcp.tool(annotations=READ_ONLY)
         def list_mutations(domain: str) -> dict[str, Any]:
             """List the write (Mutation) operations of one domain.
 
@@ -225,7 +222,7 @@ def register_progressive_tools(
             ]
             return create_success_response({"domain": domain, "mutations": fields})
 
-    @mcp.tool(annotations=_READ_ONLY)
+    @mcp.tool(annotations=READ_ONLY)
     def get_query_schema(domain: str) -> dict[str, Any]:
         """Get the SDL fragment for one domain: its operations and reachable types.
 
