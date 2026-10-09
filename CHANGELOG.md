@@ -4,6 +4,10 @@
 
 ### Added
 
+- **`instructions=` passthrough on `FastAPIMCP`** — the MCP protocol's
+  handshake usage guide, injected into the agent's context once per
+  connection; `None` (default) sends nothing. README documents how to
+  write one that saves discovery round-trips.
 - **`stateless_http=True` on `mount_to()` / `run()`** — one transport per
   request (no session affinity), for multi-worker / multi-pod deployments
   behind non-sticky load balancers where stateful streamable HTTP sessions

@@ -633,3 +633,15 @@ class TestToolAnnotations:
             tools = {t.name: t for t in await client.list_tools()}
         assert tools["list_domains"].annotations.read_only_hint is True
         assert tools["graphql_mutation"].annotations.destructive_hint is True
+
+
+class TestInstructions:
+    async def test_instructions_reach_the_handshake(self):
+        text = "Domains: iam. Compose routes in one graphql_query."
+        mcp = FastAPIMCP(build_app(), name="guided", instructions=text)
+        async with Client(mcp.mcp) as client:
+            assert client.instructions == text
+
+    async def test_no_instructions_by_default(self, mcp):
+        async with Client(mcp.mcp) as client:
+            assert client.instructions is None

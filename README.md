@@ -269,6 +269,37 @@ mcp = FastAPIMCP(
 mcp.run()  # streamable HTTP, 127.0.0.1:8000 — mcp.run(host="0.0.0.0", port=9000)
 ```
 
+#### `instructions`: the agent's first read
+
+`instructions` rides the `initialize` handshake — clients inject it into
+the conversation once per connection, before any tool call. A short guide
+saves the agent its discovery round-trips (and you the tokens):
+
+```python
+mcp = FastAPIMCP(
+    app,
+    name="my-app",
+    instructions=(
+        "Notes service exposed as GraphQL. Domains: iam (users, roles), "
+        "shop (catalog, orders). Call get_schema once, then compose "
+        "several routes in a single graphql_query — a failing route nulls "
+        "only its own field. Writes go through graphql_mutation."
+    ),
+)
+```
+
+Writing it well:
+
+- **Lead with the domain map** — the same names your `tags` produce, so
+  the agent can aim `graphql_query` without reading the whole SDL first.
+- **Say the composition rule** — one query can combine routes; that is the
+  feature agents most often fail to discover on their own.
+- **Name the write channel** — `graphql_mutation` (if enabled).
+- **Keep it under ~120 tokens** — it is resident context for the whole
+  session; the SDL (via `get_schema`) already carries the details.
+- Progressive mode profits most: a domain map in `instructions` lets the
+  agent skip `list_domains` and go straight to `list_queries("iam")`.
+
 ### Progressive disclosure (large apps)
 
 Above `progressive_threshold` routes (default 25, `mode="auto"`, counted
