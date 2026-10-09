@@ -89,6 +89,18 @@
 
 ### Fixed
 
+- **Route-boundary TypeVars normalize or degrade — never skip the route**
+  (issue #5). A constrained `TypeVar` is pydantic's spelling of "one of
+  these" and a bound one of "this or narrower"; both now normalize to
+  exactly that before mapping, so `list[list[T]]` parameters and
+  responses map like the constraint union (JSON elements) or the bound
+  (fully structured) instead of removing the whole route. A fully unbound
+  `TypeVar` at a route boundary degrades the route to raw JSON with the
+  parameterize guidance — the same fallback a TypeVar field gets inside a
+  model — and `readiness().degraded` carries the reason (skips stay for
+  shapes no fallback can express, e.g. `-> bytes`). Inside models, a
+  constrained-TypeVar field now bridges with the union note naming the
+  constraint shapes instead of the unbound-TypeVar wording.
 - **The alias wire contract: GraphQL names are translated, not diverged.**
   A wire name FastAPI validates/serializes by but GraphQL cannot spell
   (`Query(alias="order-id")`, `Field(alias="item-sku")`) previously either
