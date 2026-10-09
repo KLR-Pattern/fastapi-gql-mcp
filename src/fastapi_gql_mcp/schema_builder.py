@@ -71,16 +71,26 @@ def _graphql_default(default: Any) -> Any:
 def _arguments(route: RouteInfo, types: TypeBuilder) -> dict[str, GraphQLArgument]:
     args: dict[str, GraphQLArgument] = {}
     for param in (*route.path_params, *route.query_params, *route.body_params):
-        if param.name in args:
+        gname = param.gname or param.name  # sanitized when the wire name is
+        # not a legal GraphQL identifier
+        if gname in args:
             raise DuplicateArgError(
                 f"Route {route.method} {route.path} has two parameters mapping to "
-                f"GraphQL argument '{param.name}'; rename one of them."
+                f"GraphQL argument '{gname}'; rename one of them."
             )
-        args[param.name] = _argument(param, types, route)
+        args[gname] = _argument(param, types, route)
     return args
 
 
 def _resolver(route: RouteInfo, invoker: RouteInvoker) -> Any:
+    # GraphQL-name -> wire-name for sanitized arguments: the executor hands
+    # kwargs keyed by the (legal) GraphQL name, the request needs the wire one.
+    rename = {
+        p.gname: p.name
+        for p in (*route.path_params, *route.query_params, *route.body_params)
+        if p.gname and p.gname != p.name
+    }
+
     async def resolve(_root: Any, _info: Any, **kwargs: Any) -> Any:
         # Per-call headers ride in graphql-core's context_value. A foreign or
         # absent context (someone calling graphql() on handler.schema directly)
@@ -88,6 +98,8 @@ def _resolver(route: RouteInfo, invoker: RouteInvoker) -> Any:
         # behavior.
         context = _info.context
         headers = context.headers if isinstance(context, InvocationContext) else None
+        if rename:
+            kwargs = {rename.get(k, k): v for k, v in kwargs.items()}
         return await invoker.invoke(route, kwargs, extra_headers=headers)
 
     return resolve
