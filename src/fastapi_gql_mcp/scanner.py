@@ -136,7 +136,7 @@ class ReadinessReport:
 
     skips: tuple[SkipRecord, ...]  # never entered the schema
     degraded: tuple[DegradedRecord, ...]  # in the schema, no field selection
-    degraded_fields: tuple[tuple[str, str], ...]  # (Model.field, "A|B")
+    degraded_fields: tuple[tuple[str, str], ...]  # (Model.field, reason)
 
     @property
     def ready(self) -> bool:
@@ -159,7 +159,7 @@ def _readiness_report(
             for r in routes
             if (reason := _degraded_reason(r)) is not None
         ),
-        degraded_fields=tuple(types.union_fields),
+        degraded_fields=tuple(types.degraded_fields),
     )
 
 
@@ -443,12 +443,15 @@ class RouterScanner:
                 len(degraded),
                 rendered,
             )
-        if types.union_fields:
-            rendered = "; ".join(f"{path} ({names})" for path, names in types.union_fields)
+        if types.degraded_fields:
+            rendered = "; ".join(
+                f"{path} ({reason})" for path, reason in types.degraded_fields
+            )
             logger.warning(
-                "fastapi-gql-mcp bridged %d union field(s) as raw JSON — "
-                "restructure the model class to regain field selection: %s",
-                len(types.union_fields),
+                "fastapi-gql-mcp bridged %d model field(s) as raw JSON — "
+                "restructure the union away or give the field a JSON-"
+                "compatible annotation to regain field selection: %s",
+                len(types.degraded_fields),
                 rendered,
             )
         return routes, skips

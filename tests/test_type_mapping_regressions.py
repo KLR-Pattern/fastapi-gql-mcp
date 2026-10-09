@@ -57,6 +57,20 @@ class OuterGood(BaseModel):
     ok: int
 
 
+class EmptyInner(BaseModel):
+    """No fields: a whole-object failure no field fallback can express."""
+
+
+class OuterE(BaseModel):
+    inner: EmptyInner
+    ok: int
+
+
+class WeirdRecord(TypedDict):
+    value: str
+    blob: Opaque
+
+
 class FirstMode(Enum):
     FIRST = "first"
 
@@ -124,13 +138,14 @@ def _reasons(handler: RouterGraphQLHandler) -> list[str]:
 # ---------------------------------------------------------------------- tier 1
 
 
-class TestTier1FailureIsolation:
-    """P0 (issue #1): a failed model build poisons the shared type cache, a
-    later route reusing the model passes scanning, and the whole schema
-    build dies. Target: registration is transactional — every reuse of a
-    bad model gets its own skip, and unrelated routes survive."""
+class TestTier1FieldFallback:
+    """P0 (issue #1) + batch 5: a bad FIELD never costs the route. The 0.9.0
+    crash (TypeError "fields cannot be resolved") is gone at the source —
+    unmappable fields degrade to JSON with a readiness-report entry and a
+    startup warning; whole-object failures (empty models) still roll back
+    transactionally and degrade the referencing field instead."""
 
-    def test_shared_bad_model_skips_both_routes_schema_survives(self):
+    def test_shared_bad_model_keeps_both_routes_as_degraded_field(self):
         app = baseline_app()
 
         @app.get("/case-one", response_model=SharedBad)
@@ -142,38 +157,41 @@ class TestTier1FailureIsolation:
             return {"payload": Opaque()}
 
         handler = RouterGraphQLHandler(app)  # 0.9.0: TypeError here
-        assert "/baseline" in _paths(handler)
-        assert "/case-one" not in _paths(handler)
-        assert "/case-two" not in _paths(handler)
-        # each reuse gets its OWN skip record naming the offending field
-        assert sum("SharedBad.payload" in r for r in _reasons(handler)) == 2
+        assert handler.skips == []
+        assert set(_paths(handler)) == {"/baseline", "/case-one", "/case-two"}
+        # the field degrades ONCE per model (fields build once, then cache)
+        assert handler.readiness().degraded_fields == (
+            ("SharedBad.payload", "Opaque has no GraphQL mapping"),
+        )
+        assert "payload: JSON!" in handler.get_sdl()
 
-    def test_nested_bad_model_skips_every_dependent_route(self):
-        """Rollback must cover every recursion frame: OuterGood registers,
-        its InnerBad field fails, both frames roll back — so a second
-        OuterGood route and a direct InnerBad route each fail afresh."""
+    def test_nested_bad_field_degrades_only_that_field(self):
+        """OuterGood stays fully structured: InnerBad builds with its one
+        bad field bridged as JSON — the 0.9.0 cascade skip is gone."""
         app = baseline_app()
 
         @app.get("/outer-a", response_model=OuterGood)
         async def outer_a() -> dict:
             return {"inner": {"payload": Opaque()}, "ok": 1}
 
-        @app.get("/outer-b", response_model=OuterGood)
-        async def outer_b() -> dict:
-            return {"inner": {"payload": Opaque()}, "ok": 2}
-
         @app.get("/inner", response_model=InnerBad)
         async def inner() -> dict:
             return {"payload": Opaque()}
 
         handler = RouterGraphQLHandler(app)
-        assert "/baseline" in _paths(handler)
-        assert {"/outer-a", "/outer-b", "/inner"}.isdisjoint(_paths(handler))
-        assert sum("InnerBad.payload" in r for r in _reasons(handler)) == 3
+        assert handler.skips == []
+        assert set(_paths(handler)) == {"/baseline", "/outer-a", "/inner"}
+        sdl = handler.get_sdl()
+        assert "inner: InnerBad!" in sdl  # OuterGood.inner keeps its structure
+        assert "payload: JSON!" in sdl    # only InnerBad.payload degrades
+        assert handler.readiness().degraded_fields == (
+            ("InnerBad.payload", "Opaque has no GraphQL mapping"),
+        )
 
-    def test_shared_bad_input_model_is_skipped_per_route(self):
-        """The input side registers before building fields too — same
-        poisoning path, same isolation contract."""
+    def test_shared_bad_input_model_degrades_input_field(self):
+        """The input side degrades the same way: the argument keeps the
+        SharedBadInput type, its bad field becomes a JSON argument FastAPI
+        validates at call time."""
         app = baseline_app()
 
         @app.post("/case-one", response_model=str)
@@ -185,24 +203,61 @@ class TestTier1FailureIsolation:
             return "ok"
 
         handler = RouterGraphQLHandler(app, allow_mutation=True)
-        assert "/baseline" in _paths(handler)
-        assert "/case-one" not in _paths(handler)
-        assert "/case-two" not in _paths(handler)
-        assert sum("SharedBad.payload" in r for r in _reasons(handler)) == 2
+        assert handler.skips == []
+        assert set(_paths(handler)) == {"/baseline", "/case-one", "/case-two"}
+        sdl = handler.get_sdl()
+        assert "payload: SharedBadInput!" in sdl
+        assert "payload: JSON!" in sdl
+        assert handler.readiness().degraded_fields == (
+            ("SharedBad.payload", "Opaque has no GraphQL mapping"),
+        )
 
-    def test_failed_build_is_not_cached(self):
-        """The rollback mechanism at builder level: a failed build leaves
-        nothing behind, so a retry fails afresh — never a cached half-built
-        type that detonates the schema at GraphQLSchema time."""
+    def test_whole_object_failure_raises_and_is_not_cached(self):
+        """The transactional rollback stays as the safety net for WHOLE-
+        object failures (which no field fallback can express): an empty
+        model raises, rolls its registration back, and a retry fails afresh
+        — never a cached half-built type."""
         builder = TypeBuilder()
+        with pytest.raises(UnsupportedFieldTypeError, match="no usable fields"):
+            builder.output_type(EmptyInner)
         with pytest.raises(UnsupportedFieldTypeError):
-            builder.output_type(SharedBad)
-        with pytest.raises(UnsupportedFieldTypeError):
-            builder.output_type(SharedBad)
-        with pytest.raises(UnsupportedFieldTypeError):
-            builder.input_type(SharedBad)
-        with pytest.raises(UnsupportedFieldTypeError):
-            builder.input_type(SharedBad)
+            builder.output_type(EmptyInner)
+        with pytest.raises(UnsupportedFieldTypeError, match="no usable input fields"):
+            builder.input_type(EmptyInner)
+
+    def test_nested_empty_model_degrades_referencing_field(self):
+        """Rollback exercised end-to-end: EmptyInner registers, fails 'no
+        usable fields', rolls back — OuterE.inner then degrades to JSON
+        instead of skipping the route."""
+        app = baseline_app()
+
+        @app.get("/outer-e", response_model=OuterE)
+        async def outer_e() -> dict:
+            return {"inner": {}, "ok": 1}
+
+        handler = RouterGraphQLHandler(app)
+        assert handler.skips == []
+        assert "/outer-e" in _paths(handler)
+        sdl = handler.get_sdl()
+        assert "inner: JSON!" in sdl
+        assert "ok: Int!" in sdl
+        assert handler.readiness().degraded_fields == (
+            ("OuterE.inner", "EmptyInner has no usable fields"),
+        )
+
+    def test_unmappable_typeddict_field_degrades(self):
+        """TypedDict fields ride the same fallback, input and output."""
+        builder = TypeBuilder()
+        obj = builder.output_type(WeirdRecord).of_type
+        assert str(obj.fields["value"].type) == "String!"
+        assert str(obj.fields["blob"].type) == "JSON!"
+        inp = builder.input_type(WeirdRecord)
+        assert str(inp.fields["value"].type) == "String!"
+        assert str(inp.fields["blob"].type) == "JSON!"
+        # output + input builds of the same field record ONE report entry
+        assert builder.degraded_fields == [
+            ("WeirdRecord.blob", "Opaque has no GraphQL mapping")
+        ]
 
 
 # ---------------------------------------------------------------------- tier 2
@@ -465,11 +520,11 @@ class TestTier3InputUnionFallback:
 
 
 class TestTier3UnboundTypeVar:
-    """P2 (issue #5): an unparameterized generic already skips only its own
-    route — what's missing is a diagnostic an author can act on: name the
-    model and the way out, not just the bare `~T`."""
+    """P2 (issue #5): an unparameterized generic degrades only its own
+    field, with a diagnostic the author can act on — the model, the
+    unbound TypeVar, and the way out, not just a bare `~T`."""
 
-    def test_unparameterized_generic_skips_with_actionable_reason(self):
+    def test_unparameterized_generic_degrades_with_actionable_reason(self):
         app = baseline_app()
 
         @app.get("/case", response_model=GenericEnvelope, tags=["g"])
@@ -477,9 +532,11 @@ class TestTier3UnboundTypeVar:
             return {"value": "unbound"}
 
         handler = RouterGraphQLHandler(app)
-        assert "/baseline" in _paths(handler)
-        assert "/case" not in _paths(handler)
+        assert handler.skips == []
+        assert "/case" in _paths(handler)
+        assert "value: JSON!" in handler.get_sdl()
+        reasons = [reason for _path, reason in handler.readiness().degraded_fields]
         assert any(
-            "GenericEnvelope" in r and "unbound" in r.lower()
-            for r in _reasons(handler)
+            "GenericEnvelope" in r and "unbound TypeVar" in r and "parameterize" in r
+            for r in reasons
         )

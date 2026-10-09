@@ -426,9 +426,9 @@ class TestJsonFallbackNotices:
 
         with caplog.at_level(logging.WARNING, logger="fastapi_gql_mcp.scanner"):
             scan(app)
-        assert "bridged 1 union field(s)" in caplog.text
+        assert "bridged 1 model field(s) as raw JSON" in caplog.text
+        assert "restructure the union away" in caplog.text
         assert "Wrapped.result (ItemOut, Err)" in caplog.text
-        assert "restructure the model class" in caplog.text
 
     def test_response_filter_notice(self, caplog):
         import logging

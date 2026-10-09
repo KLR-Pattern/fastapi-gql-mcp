@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Changed
+
+- **Unmappable model fields degrade to raw JSON instead of skipping the
+  route** (issue #3, General Fix Strategy #2). A field whose type has no
+  GraphQL mapping (`metadata: SomeCustomClass`) bridges as the `JSON`
+  scalar — the surrounding model keeps its structured, selectable fields,
+  and the degradation lands in `readiness().degraded_fields` and the
+  startup warning, exactly like union fields always have. Input fields
+  degrade the same way (FastAPI validates whatever arrives; a 422 surfaces
+  as a field error). Unbound-TypeVar generics now degrade their field
+  (keeping the parameterize guidance) instead of skipping the route.
+  Skips remain only where no fallback can express the shape: top-level
+  response/parameter annotations with no mapping at all (`-> bytes`, a
+  bare custom class); a wholly-unusable nested type (an empty model)
+  rolls back transactionally and degrades its referencing field.
+  `TypeBuilder.union_fields` is renamed to `degraded_fields` (unions and
+  unmappable types, deduplicated per field+reason).
+
 ### Added
 
 - **Recursive fields return their true depth.** A selection on a recursive

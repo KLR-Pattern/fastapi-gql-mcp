@@ -14,3 +14,7 @@ examples/*/uv.lock
 examples/*/.venv/
 Comparison/bench/*/uv.lock
 .coverage
+
+# Claude Code project MCP servers (e.g. notes-demo on localhost:8020) —
+# environment-local dev convenience, not project config
+.mcp.json
