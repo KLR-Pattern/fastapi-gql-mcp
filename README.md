@@ -48,6 +48,10 @@ agents get:
   degrade to a documented raw-JSON field (with a startup notice naming the
   cause and the fix), and `-> None` routes become Boolean success fields —
   migration keeps its feel instead of routes silently vanishing
+- **recursive data comes back complete** — selecting a recursive field
+  means "the whole subtree": one level of `children` selection returns the
+  tree at its true depth (the route already computed it; there is no
+  invisible truncation), with your selection shape repeating per level
 
 ### Compared to the alternatives
 
@@ -147,8 +151,8 @@ Rules worth knowing:
   on a leaf is indistinguishable from a cut-off subtree). `max_depth`
   still guards the document you write; per-level field filtering applies
   at every depth. The recursive type's schema description states this
-  contract once per type, so agents discover it from the SDL itself. The recursive field's schema description carries this
-  contract, so agents learn it from the SDL itself.
+  contract in one line per type, so agents discover it from the SDL
+  itself.
 - **Dynamic shapes pass through as `JSON`** — `dict`/`Any` annotations bridge
   as the `JSON` scalar in both directions (a `JSON` argument lands as the raw
   request body); untyped routes, serialization-filtered responses and unions
@@ -500,6 +504,9 @@ uv run --extra mcp python -m examples.shop.mcp_walkthrough     # agent's-eye MCP
 
 `python -m examples.shop` prints all endpoint URLs and serves the grouped
 schema; `/now` is untyped on purpose so the skip warning is visible at startup.
+`GET /categories` is the recursive showcase — `CategoryOut.children` is
+self-referencing, so over MCP one level of `children` selection returns the
+whole tree (the type's schema description states the contract).
 
 For the full consumer experience — a real app with **GitHub OAuth login,
 session cookies, and MCP OAuth (Claude Code's browser login flow)** — see
