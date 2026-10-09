@@ -97,3 +97,11 @@ class TestHandlerIntegration:
         # (merged from the former test_introspection_works).
         shallow = await handler.execute("{ __schema { queryType { name } } }")
         assert shallow == {"data": {"__schema": {"queryType": {"name": "Query"}}}}
+
+    async def test_syntax_error_with_guard_disabled(self, make_handler):
+        """max_depth=None takes the unguarded parse path — a malformed
+        document still surfaces as a clean error envelope, never a crash."""
+        handler = make_handler(node_app(), max_depth=None)
+        result = await handler.execute("{ a {")
+        assert "data" not in result
+        assert "Syntax Error" in result["errors"][0]["message"]

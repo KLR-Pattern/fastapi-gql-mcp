@@ -115,7 +115,25 @@ class TestListQueries:
         assert [m["name"] for m in result["data"]["mutations"]] == ["create_user"]
 
 
+class TestListMutations:
+    async def test_unknown_domain_error(self, mcp):
+        async with Client(mcp.mcp) as client:
+            result = tool_payload(await client.call_tool("list_mutations", {"domain": "nope"}))
+        assert result["success"] is False
+        assert result["error_type"] == "domain_not_found"
+        assert "iam" in result["hint"]
+
+
 class TestGetQuerySchema:
+    async def test_unknown_domain_error(self, mcp):
+        async with Client(mcp.mcp) as client:
+            result = tool_payload(
+                await client.call_tool("get_query_schema", {"domain": "nope"})
+            )
+        assert result["success"] is False
+        assert result["error_type"] == "domain_not_found"
+        assert "iam" in result["hint"]
+
     async def test_fragment_scoped_to_domain(self, mcp):
         async with Client(mcp.mcp) as client:
             result = tool_payload(await client.call_tool("get_query_schema", {"domain": "iam"}))

@@ -263,3 +263,44 @@ class TestRenderParamContract:
         assert _render_param([1, None, 3]) == [1, 3]
         assert _render_param([None, None]) is None  # all-None → not sent
         assert _render_param(None) is None
+
+
+class TestResponseBodyShapes:
+    async def test_non_json_2xx_body_wrapped_as_raw(self):
+        """A typed route that returns a bare Response (FastAPI skips
+        serialization for Response returns) serves text/plain with 200 —
+        the invoker wraps the body instead of failing to parse it."""
+        from fastapi.responses import PlainTextResponse
+
+        app = FastAPI()
+
+        @app.get("/text", response_model=str)
+        async def text() -> str:
+            return PlainTextResponse("hello")
+
+        r = route_for(app, "GET", "/text")
+        invoker = RouteInvoker(app, manage_lifespan=False)
+        try:
+            assert await invoker.invoke(r, {}) == {"_raw": "hello"}
+        finally:
+            await invoker.aclose()
+
+    async def test_long_error_body_truncated(self):
+        from fastapi import HTTPException
+
+        app = FastAPI()
+
+        @app.get("/boom", response_model=ItemOut)
+        async def boom() -> ItemOut:
+            raise HTTPException(status_code=400, detail="x" * 600)
+
+        r = route_for(app, "GET", "/boom")
+        invoker = RouteInvoker(app, manage_lifespan=False)
+        try:
+            with pytest.raises(GraphQLError) as exc:
+                await invoker.invoke(r, {})
+        finally:
+            await invoker.aclose()
+        message = exc.value.message
+        assert message.endswith("…"), "the overflow must be visibly truncated"
+        assert "x" * 600 not in message

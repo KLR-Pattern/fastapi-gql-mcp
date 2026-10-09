@@ -11,10 +11,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, Optional
 
+import pytest
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from fastapi_gql_mcp.handler import RouterGraphQLHandler
+from fastapi_gql_mcp.type_builder import UnsupportedFieldTypeError
 
 
 class Mode(Enum):
@@ -244,3 +246,76 @@ class TestBoundaries:
         assert result == {"data": {"t": {"j": {
             "name": "x", "payload": {"k": [1, 2]},
         }}}}, result
+
+
+@dataclass
+class ChoiceA:
+    a: int
+
+
+@dataclass
+class ChoiceB:
+    b: int
+
+
+@dataclass
+class Cmd:
+    # module level on purpose: the union's forward ref must resolve, and
+    # function-local dataclasses hide their names from get_type_hints
+    name: str
+    blob: bytes
+    either: "ChoiceA | ChoiceB"
+
+
+class TestDegradedDataclassFields:
+    """Unmappable and union dataclass fields degrade per-field, on both
+    sides, and the readiness report names each one — same audit contract
+    as Pydantic models."""
+
+    @staticmethod
+    def _app():
+        app = FastAPI()
+
+        @app.get("/ping", response_model=str, tags=["t"])
+        async def ping() -> str:
+            return "pong"
+
+        @app.get("/blob", tags=["t"])
+        async def blob() -> Cmd:
+            return Cmd(name="x", blob=b"y", either=ChoiceA(a=1))
+
+        @app.post("/cmd", tags=["t"])
+        async def cmd(payload: Cmd) -> dict:
+            return {}
+
+        return app
+
+    async def test_output_degraded_field_bridges_with_record(self, make_handler):
+        handler = make_handler(self._app())
+        sdl = handler.get_sdl()
+        assert "blob: JSON" in sdl and "either: JSON" in sdl
+        assert "name: String!" in sdl  # siblings stay structured
+        assert handler.readiness().degraded_fields == (
+            ("Cmd.blob", "bytes has no GraphQL mapping"),
+            ("Cmd.either", "ChoiceA, ChoiceB"),
+        )
+
+    async def test_input_degraded_fields_execute_via_json(self, make_handler):
+        handler = make_handler(self._app(), allow_mutation=True)
+        result = await handler.execute(
+            'mutation { t { cmd(payload: {name: "n", blob: "aGk=", '
+            'either: {a: 1}}) } }'
+        )
+        assert result == {"data": {"t": {"cmd": {}}}}, result
+
+
+class TestEmptyDataclass:
+    def test_empty_dataclass_input_raises(self):
+        from fastapi_gql_mcp.type_builder import TypeBuilder
+
+        @dataclass
+        class Empty:
+            pass
+
+        with pytest.raises(UnsupportedFieldTypeError, match="no usable input fields"):
+            TypeBuilder().input_type(Empty)

@@ -263,3 +263,37 @@ class TestObjects:
 
     def test_output_list_of_models(self):
         assert str(TypeBuilder().output_type(list[UserOut])) == "[UserOut!]!"
+
+
+class TestEmptyTypedDict:
+    def test_empty_output_and_input_raise(self):
+        from typing_extensions import TypedDict
+
+        class Empty(TypedDict):
+            pass
+
+        with pytest.raises(UnsupportedFieldTypeError, match="no usable fields"):
+            TypeBuilder().output_type(Empty)
+        with pytest.raises(UnsupportedFieldTypeError, match="no usable input fields"):
+            TypeBuilder().input_type(Empty)
+
+
+class TestOutputAliasChoices:
+    def test_alias_choices_falls_back_to_field_name(self):
+        # An AliasChoices alias has no single JSON key to serialize by, so
+        # the GraphQL field keeps the Python name (FastAPI serializes
+        # unaliased output by field name too).
+        from pydantic import AliasChoices, Field
+
+        class Weird(BaseModel):
+            a: str = Field(default="", alias=AliasChoices("x", "y"))
+
+        out = TypeBuilder().output_type(Weird)
+        assert set(out.of_type.fields) == {"a"}
+
+
+class TestInputListNullability:
+    def test_input_list_of_optional_items_not_non_null(self):
+        # Optional list ITEMS map to [T] (no NonNull), matching the output
+        # side's list-of-optional contract.
+        assert render(TypeBuilder().input_type(list[Optional[int]])) == "[Int]"  # noqa: UP045

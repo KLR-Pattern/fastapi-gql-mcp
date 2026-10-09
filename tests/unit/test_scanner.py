@@ -194,6 +194,19 @@ class TestSkips:
         _, skips = scan(scanner_app())
         assert any("header/cookie" in r for r in skip_reasons(skips, "/needs-header"))
 
+    def test_head_options_only_route_ignored(self):
+        """HEAD/OPTIONS register no bridgable verb: the route vanishes
+        without a skip — there is nothing the operator could fix."""
+        app = FastAPI()
+
+        @app.api_route("/x", methods=["HEAD", "OPTIONS"])
+        async def x():
+            return {}
+
+        routes, skips = RouterScanner(app).scan()
+        assert routes == []
+        assert skips == []
+
     def test_form_only_scalar_skipped(self):
         """G12 regression: Annotated[str, Form()] has a perfectly valid
         GraphQL annotation, so the type check alone would let it through

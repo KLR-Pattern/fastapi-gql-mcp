@@ -173,3 +173,30 @@ class TestTypedDictKeys:
         assert "item_sku: String!" in sdl
         result = await handler.execute("{ t { hyph { item_sku } } }")
         assert result == {"data": {"t": {"hyph": {"item_sku": "wire-value"}}}}, result
+
+    async def test_hyphenated_typeddict_input_key_translates(self, make_handler):
+        """Input side of the hyphenated-key contract: the GraphQL argument
+        is the sanitized item_sku and the resolver translates back to the
+        wire key the TypedDict validates by."""
+        from typing_extensions import TypedDict
+
+        Hyphened = TypedDict("Hyphened", {"item-sku": str})  # noqa: N806
+
+        app = FastAPI()
+        received: dict = {}
+
+        from tests.support.apps import add_ping
+
+        add_ping(app)
+
+        @app.post("/hyph", tags=["t"])
+        async def hyph(payload: Hyphened) -> str:
+            received.update(payload)
+            return "ok"
+
+        handler = make_handler(app, allow_mutation=True)
+        result = await handler.execute(
+            'mutation { t { hyph(payload: {item_sku: "abc"}) } }'
+        )
+        assert result == {"data": {"t": {"hyph": "ok"}}}, result
+        assert received == {"item-sku": "abc"}
