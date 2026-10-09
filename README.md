@@ -44,10 +44,15 @@ agents get:
   middleware and headers apply; pass credentials via per-caller header
   passthrough
 - **nothing disappears** — if a route works over HTTP, it stays callable
-  here: untyped responses, serialization-filtered responses and unions
-  degrade to a documented raw-JSON field (with a startup notice naming the
+  here: untyped responses, serialization-filtered responses, unions and
+  model fields whose type has no GraphQL mapping degrade to a documented
+  raw-JSON field (with a startup notice naming the
   cause and the fix), and `-> None` routes become Boolean success fields —
   migration keeps its feel instead of routes silently vanishing
+- **recursive data comes back complete** — selecting a recursive field
+  means "the whole subtree": one level of `children` selection returns the
+  tree at its true depth (the route already computed it; there is no
+  invisible truncation), with your selection shape repeating per level
 
 ### Compared to the alternatives
 
@@ -139,11 +144,21 @@ Rules worth knowing:
   writes in DIFFERENT domains are ordered; writes grouped under the SAME
   domain run in parallel like query fields. When write order matters, put the
   operations in separate domains or send separate mutation documents.
+- **Recursive models return their true depth.** Selecting a recursive
+  field means "the whole subtree": the selection shape where you stop
+  repeats to whatever depth the data has — the route already computed the
+  full tree, and the bridge hands it over complete instead of truncating
+  at the document's depth (truncation there was invisible: `children: []`
+  on a leaf is indistinguishable from a cut-off subtree). `max_depth`
+  still guards the document you write; per-level field filtering applies
+  at every depth. The recursive type's schema description states this
+  contract in one line per type, so agents discover it from the SDL
+  itself.
 - **Dynamic shapes pass through as `JSON`** — `dict`/`Any` annotations bridge
   as the `JSON` scalar in both directions (a `JSON` argument lands as the raw
-  request body); untyped routes, serialization-filtered responses and unions
-  degrade the same way, each with a field note and a startup notice naming
-  the fix — see [Capability boundaries](#capability-boundaries). Only routes
+  request body); untyped routes, serialization-filtered responses, unions and
+  unmappable model fields degrade the same way, each with a field note and a
+  startup notice naming the fix — see [Capability boundaries](#capability-boundaries). Only routes
   that cannot be called correctly at all are skipped, with a logged reason;
   `handler.skips` lists them programmatically, and `readiness()` returns the
   full skip + degradation audit for CI assertions.
@@ -173,7 +188,8 @@ Every route lands in one of four buckets.
 ### Structured — the default
 
 A typed `response_model` (or return annotation) over Pydantic models becomes
-a selectable GraphQL type: `{ id name }`, nested models, lists, enums, custom
+a selectable GraphQL type: `{ id name }`, nested models, `TypedDict`s, lists
+and sets, enums, `Literal`s (enum members normalize to their values), custom
 scalars (`UUID`, `Decimal`, datetime…), generics (`Page[Item]`), aliases.
 
 ### Raw JSON fallback — still callable, just not field-selectable
@@ -184,6 +200,8 @@ scalars (`UUID`, `Decimal`, datetime…), generics (`Page[Item]`), aliases.
 | no return annotation, no `response_model` | same, plus the field description and a startup notice tell you to add one |
 | `response_model_exclude_unset` / `_exclude_defaults` / `_include` / `_exclude` / `by_alias=False` | filtering runs after validation, so per-field promises cannot hold; the notice names the kwarg |
 | returns a union (`Item \| Error`) | the union bridges as `JSON`; nested inside a model, only that field degrades |
+| a model field no GraphQL type can express (`metadata: SomeCustomClass`) | only that field bridges as `JSON` — the model keeps its structured fields; `readiness().degraded_fields` names it |
+| takes a union parameter (`value: A \| B`) | the argument bridges as `JSON`; FastAPI validates whichever member arrives (a 422 surfaces as a field error) |
 
 Every fallback names its cause in the field description **and** in a startup
 warning (`bridged N route(s) as raw JSON …`) that says how to get field
@@ -209,7 +227,7 @@ exposes them (`path`, `method`, `reason`) for CI assertions, and
 | write verbs with `allow_mutation=False` (the default) | opt in with `allow_mutation=True` or `mutation_include` |
 | hidden route (`include_in_schema=False`) | opt in with `include_hidden=True` |
 | returns a raw `Response` (streaming, plain text) | no typed body to expose |
-| input type GraphQL cannot express (`payload: A \| B`, `set[int]`, …) | GraphQL has no input unions; guessing would fail at runtime |
+| response/parameter annotation with no mapping at all (`-> bytes`, a bare custom class) | no per-field shape exists to degrade to — annotate with a JSON-compatible type |
 
 `include`/`exclude` globs — and `include_tags`/`exclude_tags` — also remove
 routes by configuration; that is filtering you asked for, not a skip.
@@ -229,7 +247,7 @@ report = RouterScanner(app, include_tags=["iam:*"]).readiness()
 report.ready            # False when anything is skipped or degraded
 report.skips            # tuple[SkipRecord(path, method, reason, tags), ...]
 report.degraded         # tuple[DegradedRecord(path, method, field_name, reason, tags), ...]
-report.degraded_fields  # tuple[(Model.field, "A | B"), ...]
+report.degraded_fields  # tuple[(Model.field, reason), ...] — unions and unmappable field types
 
 # or over an already-built deployment (stored scan results, no re-scan)
 mcp.handler.readiness()
@@ -268,6 +286,37 @@ mcp = FastAPIMCP(
 )
 mcp.run()  # streamable HTTP, 127.0.0.1:8000 — mcp.run(host="0.0.0.0", port=9000)
 ```
+
+#### `instructions`: the agent's first read
+
+`instructions` rides the `initialize` handshake — clients inject it into
+the conversation once per connection, before any tool call. A short guide
+saves the agent its discovery round-trips (and you the tokens):
+
+```python
+mcp = FastAPIMCP(
+    app,
+    name="my-app",
+    instructions=(
+        "Notes service exposed as GraphQL. Domains: iam (users, roles), "
+        "shop (catalog, orders). Call get_schema once, then compose "
+        "several routes in a single graphql_query — a failing route nulls "
+        "only its own field. Writes go through graphql_mutation."
+    ),
+)
+```
+
+Writing it well:
+
+- **Lead with the domain map** — the same names your `tags` produce, so
+  the agent can aim `graphql_query` without reading the whole SDL first.
+- **Say the composition rule** — one query can combine routes; that is the
+  feature agents most often fail to discover on their own.
+- **Name the write channel** — `graphql_mutation` (if enabled).
+- **Keep it under ~120 tokens** — it is resident context for the whole
+  session; the SDL (via `get_schema`) already carries the details.
+- Progressive mode profits most: a domain map in `instructions` lets the
+  agent skip `list_domains` and go straight to `list_queries("iam")`.
 
 ### Progressive disclosure (large apps)
 
@@ -459,6 +508,9 @@ uv run --extra mcp python -m examples.shop.mcp_walkthrough     # agent's-eye MCP
 
 `python -m examples.shop` prints all endpoint URLs and serves the grouped
 schema; `/now` is untyped on purpose so the skip warning is visible at startup.
+`GET /categories` is the recursive showcase — `CategoryOut.children` is
+self-referencing, so over MCP one level of `children` selection returns the
+whole tree (the type's schema description states the contract).
 
 For the full consumer experience — a real app with **GitHub OAuth login,
 session cookies, and MCP OAuth (Claude Code's browser login flow)** — see

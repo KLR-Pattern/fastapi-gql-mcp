@@ -417,7 +417,8 @@ class TestUnionFallback:
     route — with FIELD-level granularity: only the union part degrades,
     the surrounding model stays selectable. A real GraphQLUnionType with
     resolve_type remains a future upgrade; JSON never blocks it. Input-side
-    (request body) unions still skip: GraphQL has no input unions."""
+    unions bridge as the JSON scalar too, symmetric with the output side —
+    FastAPI validates whichever member arrives (issue #3, case 4)."""
 
     class Err(BaseModel):
         code: int
@@ -492,8 +493,10 @@ class TestUnionFallback:
 
         assert render_type(TypeBuilder().output_type(int | str | None)) == "JSON"
 
-    def test_input_side_union_still_unsupported(self):
-        """Request-body unions keep skipping: GraphQL has no input unions."""
+    def test_input_side_union_bridges_as_json(self):
+        """Request-body unions bridge as the JSON scalar, symmetric with the
+        output side: the agent sends either member's JSON and FastAPI's
+        validation decides (422 -> field error)."""
         app = FastAPI()
 
         @app.post("/u", tags=["u"])
@@ -501,8 +504,8 @@ class TestUnionFallback:
             return {"ok": True}
 
         routes, skips = RouterScanner(app, allow_mutation=True).scan()
-        assert routes == []
-        assert any("Cannot map" in s.reason for s in skips)
+        assert len(routes) == 1
+        assert skips == []
 
 
 def render_type(t) -> str:
@@ -588,3 +591,38 @@ class TestSkips:
     def test_no_skips_on_clean_app(self):
         h = RouterGraphQLHandler(build_app(), allow_mutation=True)
         assert h.skips == []
+
+
+class TestRecursiveResponseModels:
+    """Self-referencing Pydantic models, end to end: schema build, SDL and
+    actual nested execution (the regression scenario from
+    tadata-org/fastapi_mcp#155 — RecursionError in their OpenAPI $ref
+    resolution; here recursion is a native GraphQL shape)."""
+
+    async def test_recursive_model_builds_sdl_and_executes_nested(self):
+        class Node(BaseModel):
+            name: str
+            children: list["Node"] = []
+
+        app = FastAPI()
+
+        @app.get("/tree", response_model=Node, tags=["tree"])
+        async def tree():
+            return Node(
+                name="root",
+                children=[
+                    Node(name="a"),
+                    Node(name="b", children=[Node(name="c")]),
+                ],
+            )
+
+        handler = RouterGraphQLHandler(app)
+        sdl = handler.get_sdl()
+        assert "children" in sdl  # the cycle resolved, not refused
+
+        result = await handler.execute(
+            "{ tree { tree { name children { name children { name } } } } }"
+        )
+        assert "errors" not in result, result
+        nested = result["data"]["tree"]["tree"]
+        assert nested["children"][1]["children"][0]["name"] == "c"

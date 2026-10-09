@@ -26,6 +26,12 @@ from opentelemetry import trace
 
 from fastapi_gql_mcp.depth_guard import parse_guarded
 from fastapi_gql_mcp.invoker import InvocationContext, RouteInvoker
+from fastapi_gql_mcp.recursive_expand import (
+    expand_recursive_chains,
+    recursive_edges,
+    unroll_exceeded,
+    unroll_limit,
+)
 from fastapi_gql_mcp.scanner import (
     ReadinessReport,
     RouteInfo,
@@ -69,17 +75,17 @@ class RouterGraphQLHandler:
         self._max_depth = max_depth
         self._validation_rules = tuple(validation_rules) if validation_rules else ()
         self._document_cache_size = document_cache_size
-        # (query string) -> (document | None, validation errors) — the pure,
-        # cacheable front half of every execution. Keyed by the string alone:
-        # schema / max_depth / validation_rules are immutable per instance.
-        # Per-instance ON PURPOSE — same-process handlers over different apps
-        # (comparison bench topology) must never cross-contaminate. Execution
-        # results are NOT cached: per-call credentials run for real every time.
-        # Single event loop: get/set have no await between them; under exotic
-        # thread callers a race costs a duplicate compile (idempotent), never
-        # a wrong answer.
+        # (query string) -> (document | None, validation errors, stamped) —
+        # the pure, cacheable front half of every execution. Keyed by the
+        # string alone: schema / max_depth / validation_rules are immutable
+        # per instance. Per-instance ON PURPOSE — same-process handlers over
+        # different apps (comparison bench topology) must never
+        # cross-contaminate. Execution results are NOT cached: per-call
+        # credentials run for real every time. Single event loop: get/set
+        # have no await between them; under exotic thread callers a race
+        # costs a duplicate compile (idempotent), never a wrong answer.
         self._doc_cache: OrderedDict[
-            str, tuple[DocumentNode | None, tuple[GraphQLError, ...]]
+            str, tuple[DocumentNode | None, tuple[GraphQLError, ...], bool]
         ] = OrderedDict()
         # Whitelist of inbound header names untrusted callers may forward into
         # route calls, lowercased at construction. None = the default
@@ -108,6 +114,20 @@ class RouterGraphQLHandler:
         self._schema = self._builder.build()
         self._routes: list[RouteInfo] = routes
         self._skips: list[SkipRecord] = skips
+        # Recursive-chain unrolling (see recursive_expand): direct
+        # self-reference edges, detected once from the built schema. The
+        # route already computed the full tree — unrolling merely removes
+        # the document-depth limitation so agents receive true depth.
+        self._recursive_edges = recursive_edges(self._schema)
+        # The unroll limit is PINNED here: compiled documents bake it in,
+        # so the excess check must judge by the same value even if the
+        # process recursion budget changes later. A raised budget serves
+        # deeper trees on NEW handlers; an old one errors loudly instead
+        # of silently truncating against its baked-in documents.
+        self._unroll_limit = unroll_limit()
+        self._recursive_edge_names = frozenset(
+            fname for _, fname in self._recursive_edges
+        )
 
     @property
     def schema(self) -> GraphQLSchema:
@@ -172,7 +192,7 @@ class RouterGraphQLHandler:
         them through ``filter_passthrough_headers`` first.
         """
         await self._invoker.start()
-        document, validation_errors = self._prepared_document(query)
+        document, validation_errors, stamped = self._prepared_document(query)
         if validation_errors:
             return {"errors": [error.formatted for error in validation_errors]}
         assert document is not None  # compile invariant: no errors → a document
@@ -203,13 +223,32 @@ class RouterGraphQLHandler:
             payload["data"] = result.data
         if result.errors:
             payload["errors"] = [error.formatted for error in result.errors]
+        # The contract (recursive_expand): data no deeper than the limit
+        # returns in full and untouched; data that exceeds the limit is
+        # served as deep as the document goes, with a definite error naming
+        # the limit. Only a stamped document can have cut data at the limit
+        # — unstamped ones skip the walk entirely.
+        if stamped and result.data is not None and unroll_exceeded(
+            result.data, document, self._recursive_edge_names, self._unroll_limit
+        ):
+            payload.setdefault("errors", []).append(
+                {
+                    "message": (
+                        f"recursive data exceeded the unroll limit "
+                        f"({self._unroll_limit} levels): the response is "
+                        f"incomplete. Raise sys.setrecursionlimit to serve "
+                        f"deeper trees — the limit scales with the "
+                        f"recursion budget."
+                    )
+                }
+            )
         return payload
 
     # ------------------------------------------------------- document compile
 
     def _prepared_document(
         self, query: str
-    ) -> tuple[DocumentNode | None, tuple[GraphQLError, ...]]:
+    ) -> tuple[DocumentNode | None, tuple[GraphQLError, ...], bool]:
         """Parse + depth-guard + validate — the pure front half of every
         execution, LRU-cached by the query string (agents repeat documents;
         validation over an immutable schema is a pure function of the
@@ -230,23 +269,44 @@ class RouterGraphQLHandler:
 
     def _compile_document(
         self, query: str
-    ) -> tuple[DocumentNode | None, tuple[GraphQLError, ...]]:
+    ) -> tuple[DocumentNode | None, tuple[GraphQLError, ...], bool]:
         # ONE parse serves both the depth guard and execution (execute()
         # takes a pre-parsed DocumentNode) — the string is never parsed twice.
         if self._max_depth is not None:
             error, document = parse_guarded(query, self._max_depth)
             if error is not None:
-                return None, (error,)
+                return None, (error,), False
             assert document is not None  # parse_guarded: no error → a document
         else:
             try:
                 document = parse(query)
             except GraphQLError as exc:
-                return None, (exc,)
-        # Custom rules EXTEND the standard set (replacing it would silently
-        # drop field/type checking for anyone passing a rule).
-        rules = (*specified_rules, *self._validation_rules)
-        return document, tuple(validate(self._schema, document, rules))
+                return None, (exc,), False
+        # True-depth recursion: the guard above ran on the AGENT's document
+        # (expansion must not become a runaway bypass); unrolling afterwards
+        # is a system behavior, so the expanded document skips the guard.
+        stamped = False
+        written = document  # the agent's document, for caller-supplied rules
+        if self._recursive_edges:
+            document, stamped = expand_recursive_chains(
+                document,
+                self._schema,
+                self._recursive_edges,
+                self._unroll_limit,
+            )
+        # Standard rules validate the document the executor will actually
+        # run; custom rules judge the document AS WRITTEN — unrolling is a
+        # system behavior that would inflate any field/complexity count and
+        # misfire cost guards on reasonable recursive selections.
+        errors: tuple[GraphQLError, ...] = tuple(
+            validate(self._schema, document, specified_rules)
+        )
+        if self._validation_rules:
+            errors = (
+                *errors,
+                *validate(self._schema, written, self._validation_rules),
+            )
+        return document, errors, stamped
 
     async def aclose(self) -> None:
         """Release the invoker's HTTP client and app lifespan."""

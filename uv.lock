@@ -756,6 +756,7 @@ dependencies = [
     { name = "httpx" },
     { name = "opentelemetry-api" },
     { name = "pydantic" },
+    { name = "typing-extensions" },
 ]
 
 [package.optional-dependencies]
@@ -784,6 +785,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "opentelemetry-api", specifier = ">=1.20" },
     { name = "pydantic", specifier = ">=2.7" },
+    { name = "typing-extensions", specifier = ">=4.6" },
 ]
 provides-extras = ["mcp"]
 

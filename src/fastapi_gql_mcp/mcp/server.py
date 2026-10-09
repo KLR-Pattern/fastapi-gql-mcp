@@ -47,6 +47,9 @@ class FastAPIMCP:
     Args:
         app: The FastAPI application whose routes become the schema.
         name: MCP server name shown to clients.
+        instructions: Usage guide agents receive with the ``initialize``
+            handshake (MCP protocol field) — a short map of the domains and
+            how to query. ``None`` (default) sends nothing.
         include/exclude: fnmatch globs over route paths (exclude wins).
         include_tags/exclude_tags: fnmatch globs over route tags
             (exclude_tags wins). A route matches when ANY of its string
@@ -113,6 +116,7 @@ class FastAPIMCP:
         app: FastAPI,
         *,
         name: str = "fastapi-gql-mcp API",
+        instructions: str | None = None,
         include: Sequence[str] | None = None,
         exclude: Sequence[str] | None = None,
         include_tags: Sequence[str] | None = None,
@@ -131,6 +135,7 @@ class FastAPIMCP:
         document_cache_size: int = 128,
     ) -> None:
         self._mode = mode
+        self._instructions = instructions
         self._progressive_threshold = progressive_threshold
         self._handler = RouterGraphQLHandler(
             app,
@@ -150,7 +155,7 @@ class FastAPIMCP:
         )
         self._resolved_mode = self._resolve_mode(mode)
         self._domains = DomainRegistry(self._handler.routes)
-        self._mcp = self._build_mcp(name, allow_mutation, auth)
+        self._mcp = self._build_mcp(name, allow_mutation, auth, instructions)
 
     def _resolve_mode(
         self, mode: Literal["auto", "simple", "progressive"]
@@ -182,11 +187,17 @@ class FastAPIMCP:
         argument, which records what was requested)."""
         return self._resolved_mode
 
-    def _build_mcp(self, name: str, allow_mutation: bool, auth: Any | None = None) -> Any:
+    def _build_mcp(
+        self,
+        name: str,
+        allow_mutation: bool,
+        auth: Any | None = None,
+        instructions: str | None = None,
+    ) -> Any:
         # fastmcp is an optional extra; import lazily like nexusx does.
         from fastmcp import FastMCP
 
-        mcp = FastMCP(name, auth=auth)
+        mcp = FastMCP(name, auth=auth, instructions=instructions)
         if self._resolved_mode == "progressive":
             from fastapi_gql_mcp.mcp.progressive_tools import register_progressive_tools
 

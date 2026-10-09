@@ -2,8 +2,63 @@
 
 ## Unreleased
 
+### Changed
+
+- **Four deduplications around the recursion machinery.** The NonNull/List
+  unwrap and the direct-self-reference predicate each have ONE definition
+  (`recursive_expand.unwrap` / `is_direct_self_reference`) shared by
+  type_builder's schema note and `recursive_edges`, so the two detectors
+  cannot drift; `UnsupportedFieldTypeError` carries a structured
+  `field_reason` attribute that degraded-field reporting reads instead of
+  sniffing exception message text; the field-build memo lives once inside
+  the register-then-build shells instead of four per-builder cache
+  wrappers.
+
+- **Unmappable model fields degrade to raw JSON instead of skipping the
+  route** (issue #3, General Fix Strategy #2). A field whose type has no
+  GraphQL mapping (`metadata: SomeCustomClass`) bridges as the `JSON`
+  scalar — the surrounding model keeps its structured, selectable fields,
+  and the degradation lands in `readiness().degraded_fields` and the
+  startup warning, exactly like union fields always have. Input fields
+  degrade the same way (FastAPI validates whatever arrives; a 422 surfaces
+  as a field error). Unbound-TypeVar generics now degrade their field
+  (keeping the parameterize guidance) instead of skipping the route.
+  Skips remain only where no fallback can express the shape: top-level
+  response/parameter annotations with no mapping at all (`-> bytes`, a
+  bare custom class); a wholly-unusable nested type (an empty model)
+  rolls back transactionally and degrades its referencing field.
+  `TypeBuilder.union_fields` is renamed to `degraded_fields` (unions and
+  unmappable types, deduplicated per field+reason).
+
 ### Added
 
+- **Recursive fields return their true depth.** A selection on a recursive
+  model field now means "the whole subtree": the agent's stopping selection
+  repeats as a template to the data's actual depth, at any position in the
+  document (the chain need not start at the root). Previously the finite
+  GraphQL document silently truncated recursive data — invisibly, since a
+  leaf's `children: []` is indistinguishable from a cut-off subtree, and
+  trees deeper than `max_depth` could not be fetched in full at all. The
+  route already computed the complete tree (routes are called once; nested
+  resolution is pure projection), so unrolling merely removes the document
+  limitation. `max_depth` still guards the document as written; fragments
+  in a recursive template and mutual recursion (A.b: B / B.a: A) are
+  consciously left unexpanded. The unroll ceiling is a function of the
+  process recursion budget (`sys.getrecursionlimit() // 16`, from a
+  measured ~12 frames per served level) — the limit never promises depth
+  the executor cannot deliver, and it scales automatically when an
+  operator raises the limit to serve deeper trees; data deeper than the
+  limit is served as deep as the document goes, with a definite error
+  naming the limit (data stays — truncation is never silent). The
+  recursive type's schema description carries a one-line contract ("full
+  subtree at true depth; your selection repeats per level") once per
+  type — local placement at ~15 tokens instead of per-field paragraphs,
+  so agents discover it from the SDL.
+
+- **`instructions=` passthrough on `FastAPIMCP`** — the MCP protocol's
+  handshake usage guide, injected into the agent's context once per
+  connection; `None` (default) sends nothing. README documents how to
+  write one that saves discovery round-trips.
 - **`stateless_http=True` on `mount_to()` / `run()`** — one transport per
   request (no session affinity), for multi-worker / multi-pod deployments
   behind non-sticky load balancers where stateful streamable HTTP sessions
@@ -14,6 +69,114 @@
 - **`exclude_deprecated=True` filter** — drops `deprecated=True` routes at
   the config level (silent drop, like path/tag filters); by default they
   stay with their GraphQL-native `@deprecated` mark.
+
+### Fixed
+
+- **A subselection-less recursive field is rejected, not crashed on.**
+  Selecting a back-edge without a subselection (`children` with no
+  `{ ... }`) is invalid GraphQL; it now comes back with the standard
+  "must have a selection of subfields" validation error like any other
+  field, instead of an uncaught `AssertionError` surfacing as an opaque
+  500.
+- **Custom validation rules see the document the agent wrote.** Unrolling
+  is a system behavior; caller-supplied rules (cost guards, complexity
+  caps) now validate the written document, so a 3-field recursive
+  selection is no longer rejected for having ~60x the fields the agent
+  asked for. The standard rule set still validates the expanded document
+  the executor actually runs.
+- **Union-field degradation is recorded on every side.** A union field
+  bridging to raw JSON lands in `readiness().degraded_fields` and carries
+  its schema note whether it sits on a model's output, a model's input, a
+  TypedDict's output or a TypedDict's input — the audit no longer depends
+  on which side of the API the field happens to be on.
+- **The excess walk is gated by the document.** Edge-named keys inside a
+  JSON passthrough payload are invisible to the document and can no
+  longer flag a mixed query (recursive tree + colliding payload keys)
+  that truncated nothing.
+- **The unroll limit is honest — the crash band is gone.** The old floor
+  `max(100, ...)` sat above the measured ~82-level execution ceiling, so
+  trees between ~83 and 100 levels returned `null` with a bare "maximum
+  recursion depth exceeded" instead of data. The limit is now
+  `sys.getrecursionlimit() // 16` (the deepest walk it can produce stays
+  at ~3/4 of the measured ceiling) and is pinned per handler instance at
+  construction: raising the budget later serves deeper trees on NEW
+  handlers, while an existing one reports a definite error on data beyond
+  its pinned limit instead of silently truncating against cached,
+  shallower documents.
+- **Excess detection is a proof, not a guess.** The unrolled document's
+  innermost repetition is a probe: data occupying it proves deeper data
+  exists. Complete data leaves the probe empty and is never flagged (the
+  old depth-counting heuristic fired on exactly-complete trees), and
+  single-object recursive edges (`next: LNode | None`) count like list
+  edges — they used to truncate with no report at all.
+- **Only stamped documents pay the per-response excess walk.** Queries
+  touching no recursive field never ran it and can no longer pick up
+  false flags from JSON passthrough payloads whose keys collide with
+  edge names; the walk also reuses edge names computed once per handler
+  instead of rebuilding them per response.
+- **Nested recursive chains unroll too.** Stamping a chain end makes
+  graphql-core's `visit` rebuild every ancestor of the edited node, so the
+  id-keyed chain-end table silently missed an outer chain end nested
+  inside another chain's template — two recursive types in one document
+  truncated invisibly (the very thing unrolling exists to prevent).
+  Detection and stamping now share one bottom-up pass: chain-end-ness is
+  decided from each node itself (its type context and its own
+  selections), so no marking state has to survive the node rebuilds.
+- **A template alias reserving the back-edge's response key no longer
+  fails validation.** `children: name` inside the stopping selection
+  collided with the stamped subtree (`children { ... }`) on the same
+  response key, rejecting a legal query with ~100 `FieldsConflict`
+  errors. Such chains now degrade to the written document — the agent's
+  own key choice wins — the same honest fallback as fragment-carrying
+  templates.
+- **A failed model build no longer poisons the shared type cache** (issue
+  #3, case 1). Object/input registration is now transactional: when a
+  field fails to map, the half-built type (and its name) rolls back out of
+  the caches. Previously the first route was skipped but the incomplete
+  type stayed cached, so a second route reusing the same model passed
+  scanning and the `GraphQLSchema` build then crashed for the WHOLE app
+  (`TypeError: ... fields cannot be resolved`) — one incompatible model
+  took every valid route down with it. Nested failures roll back every
+  recursion frame, and each reuse of a bad model now gets its own skip
+  record.
+- **`set`/`frozenset` map onto GraphQL lists** (issue #3, case 3).
+  Pydantic serializes sets to JSON arrays, so `set[T]` fields, parameters
+  and responses bridge as `[T!]!` exactly like `list[T]` — previously the
+  route was skipped with "Cannot map typing.Set".
+- **Enum members inside `Literal` map to their underlying scalar** (issue
+  #3, case 2). `Literal[Mode.A]` now normalizes `Mode.A` to `Mode.A.value`
+  and rides the existing Literal path (`String`/`Int` + the
+  "Allowed values" description); mixed members like
+  `Literal[Mode.A, "other"]` work, and route-level Literal responses now
+  carry the allowed-values note in their field description, matching model
+  fields. Previously such routes were skipped with "Literal of Mode has no
+  GraphQL scalar".
+- **`TypedDict` maps onto real object/input types** (issue #3, case 6).
+  A `TypedDict` response (or a TypedDict field nested inside a Pydantic
+  model) becomes a `GraphQLObjectType` / `GraphQLInputObjectType` like a
+  `BaseModel`: field types from `get_type_hints`, nullability from the
+  required/optional key sets (`total=False` keys bridge as nullable — they
+  may be absent from the JSON), recursive TypedDicts resolve through the
+  same register-before-fields cycle handling, and failed builds roll back
+  transactionally. Detection uses `typing_extensions.is_typeddict`, which
+  recognizes classes declared via BOTH `typing.TypedDict` and
+  `typing_extensions.TypedDict` (`typing.is_typeddict` misses the latter —
+  verified on 3.14); `typing-extensions>=4.6` is now a declared dependency.
+  Previously TypedDict responses were skipped with "Cannot map
+  <class FlatRecord>".
+- **Input unions bridge as the JSON scalar** (issue #3, case 4) — the input
+  side now has the same fallback the output side always had. `A | B`
+  parameters (query or body) map onto a `JSON` argument instead of skipping
+  the route; the agent sends either member's value and FastAPI validates it
+  — a mismatch surfaces as a GraphQL field error (422), never silently.
+  This intentionally REVERSES the documented 0.9.0 behavior where
+  request-side unions were skipped with "Cannot map"; symmetric degradation
+  beats unavailability.
+- **Unbound-TypeVar diagnostics** (issue #3, case 5). An unparameterized
+  generic (`response_model=Envelope` where `value: T`) still skips only its
+  own route, but the reason now names the fix —
+  "GenericEnvelope.value: unbound TypeVar ~T — parameterize the generic so
+  the field has a concrete type" — instead of a bare "Cannot map ~T".
 
 ## 0.9.0 (2026-10-08)
 

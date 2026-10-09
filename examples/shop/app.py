@@ -3,6 +3,10 @@
 Feature coverage on purpose:
 
 - tag domains: ``shop:catalog`` / ``shop:orders`` / ``iam:users`` / ``analytics``
+- **recursive model → true depth** (``/categories``): selecting ``children``
+  once returns the whole subtree — the selection you write repeats per
+  level, the tree comes back at the depth the route computed (no invisible
+  truncation). The type's schema description states the contract.
 - Query Parameter Model (``Annotated[ProductFilter, Query()]``)
 - auth via ``x-token`` header (orders + writes need ``demo-secret``)
 - collection/item route pairs with distinct endpoint function names
@@ -150,6 +154,18 @@ class ProductTag(BaseModel):
     featured: bool = Field(default=False, description="highlighted on the front page")
 
 
+class CategoryOut(BaseModel):
+    """A catalog category node — categories nest, so the model is recursive."""
+
+    name: str = Field(description="category name, unique within its parent")
+    children: list[CategoryOut] = Field(
+        default_factory=list, description="nested subcategories"
+    )
+
+
+CategoryOut.model_rebuild()
+
+
 class SearchHit(BaseModel):
     """One search result — a user or a product, whichever matched first."""
 
@@ -210,6 +226,18 @@ def create_app() -> FastAPI:
         4: {"id": 4, "name": "brew scale", "category": "gear",
             "price_cents": 3100, "in_stock": True},
     }
+    app.state.categories = [
+        CategoryOut(
+            name="coffee",
+            children=[
+                CategoryOut(
+                    name="filter", children=[CategoryOut(name="pour-over")]
+                ),
+                CategoryOut(name="espresso"),
+            ],
+        ),
+        CategoryOut(name="tea", children=[CategoryOut(name="green")]),
+    ]
     app.state.orders = {
         1: {"id": 1, "user_id": 1, "product_id": 1, "quantity": 1, "status": "paid"},
         2: {"id": 2, "user_id": 2, "product_id": 3, "quantity": 2, "status": "shipped"},
@@ -284,6 +312,15 @@ def create_app() -> FastAPI:
         if product is None:
             raise HTTPException(status_code=404, detail="product not found")
         return ProductOut.model_validate(product)
+
+    @app.get("/categories", response_model=list[CategoryOut], tags=["shop:catalog"])
+    async def list_categories() -> list[CategoryOut]:
+        """Browse the category tree.
+
+        Recursion showcase: over MCP, one level of ``children`` selection
+        returns the complete subtree at its true depth.
+        """
+        return app.state.categories
 
     @app.post("/products", response_model=ProductOut, tags=["shop:catalog"])
     async def create_product(

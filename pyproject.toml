@@ -12,6 +12,8 @@ dependencies = [
     "graphql-core>=3.2,<4",
     "httpx>=0.27",
     "asgi-lifespan>=2.1",
+    # is_typeddict must recognize BOTH typing and typing_extensions TypedDicts
+    "typing-extensions>=4.6",
     # tracer plumbing only — a no-op without an SDK installed (L3 context
     # propagation; see "Observability" in the README)
     "opentelemetry-api>=1.20",
