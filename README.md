@@ -21,7 +21,7 @@ mcp.run()  # HTTP MCP server with get_schema + graphql_query tools
 ```
 
 **Contents** — [Installation](#installation) · [Why](#why) ·
-[How it works](#how-it-works) · [Capability boundaries](#capability-boundaries) · [Usage](#usage) · [Authentication](#authentication) ·
+[How it works](#how-it-works) · [Capability boundaries](#capability-boundaries) · [Usage](#usage) · [Agent lifecycle](#what-the-agent-sees-connection-lifecycle) · [Authentication](#authentication) ·
 [Observability](#observability-opentelemetry) · [Hardening](#hardening-the-bridge) ·
 [Demo](#demo) · [Development](#development) · [Status](#status)
 
@@ -363,6 +363,41 @@ mcp = FastAPIMCP(
 )
 mcp.run()  # streamable HTTP, 127.0.0.1:8000 — mcp.run(host="0.0.0.0", port=9000)
 ```
+
+### What the agent sees (connection lifecycle)
+
+When an MCP client (Claude Code, Cursor, any MCP-capable agent) connects
+to the endpoint, this is what happens — and what it costs in context:
+
+```
+① Connect + handshake
+   POST /mcp → MCP initialize
+   Agent receives: tool list (2-6 constant tools) + instructions (yours)
+
+② Discover the schema (one of two modes)
+   simple:       get_schema → full SDL in one call (~1-2K tok)
+   progressive:  list_domains → search_fields / list_queries
+                 → get_query_schema for the domain it needs
+                 (~1.5K tok total, flat regardless of API size)
+
+③ Execute
+   graphql_query — one call composes any routes: fields from different
+   domains, aliases, field projection. A failing route nulls only its
+   own field; siblings survive.
+   graphql_mutation — writes (if allow_mutation=True)
+
+④ Credentials (if auth= is configured)
+   First connect → OAuth 2.1 login (browser opens, user authorizes)
+   → token stored by the client
+   → every subsequent call carries it
+   → the bridge forwards it to the routes via passthrough_headers
+   → your Depends/middleware verify it — the agent acts as the user
+```
+
+The cost curve: **① is fixed (~600 tok), ② is your choice (simple vs
+progressive), ③ is per-task, ④ is one-time per client.** An agent that
+has already connected and discovered the schema pays only ③ — every
+subsequent query is one `graphql_query` round trip.
 
 #### `instructions`: the agent's first read
 
