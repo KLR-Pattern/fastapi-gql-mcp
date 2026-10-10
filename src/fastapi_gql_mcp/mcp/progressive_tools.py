@@ -1,12 +1,17 @@
 """MCP progressive-disclosure tools for large apps.
 
-Four layers over the tag-derived domain tree:
+Five layers over the tag-derived domain tree:
 
-    list_domains -> list_queries(domain) -> get_query_schema(domain) -> graphql_query
+    list_domains -> list_queries(domain) / search_fields(domain, query)
+                 -> get_query_schema(domain) -> graphql_query
 
 Discovery is scoped per domain (a route's tags form its domain paths, the
 ``"a:b"`` separator adds depth); execution always runs against the FULL schema,
 so agents may still combine fields across domains in one query.
+
+``search_fields`` is the shortcut for wide domains: BM25 over field names
+and descriptions lands on the right field in one call, skipping the
+read-the-whole-fragment step when the agent already knows what it wants.
 
 The schema itself mirrors the same hierarchy: fields live under their domain
 groups (``{ shop { catalog { list_products } } }``), so the fragment an agent
@@ -33,6 +38,7 @@ from fastapi_gql_mcp.mcp.errors import (
 )
 from fastapi_gql_mcp.mcp.tools import READ_ONLY, register_executor_tools
 from fastapi_gql_mcp.recursive_expand import unwrap
+from fastapi_gql_mcp.search import FieldDoc, FieldSearchIndex
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -164,9 +170,81 @@ def register_progressive_tools(
         )
 
     index = handler.query_fields
-    # The schema is immutable after build, so each domain's SDL fragment is
-    # computed once and reused — agents re-explore the same domain often.
+    mutation_index_all = handler.mutation_fields
+    # The schema is immutable after build, so each domain's SDL fragment and
+    # search index are computed once and reused — agents re-explore the same
+    # domain often.
     sdl_cache: dict[tuple[str, ...], str] = {}
+    search_index_cache: dict[tuple[str, ...], FieldSearchIndex] = {}
+
+    def _domain_docs(path: tuple[str, ...]) -> list[FieldDoc]:
+        """FieldDocs for a domain subtree: queries plus (if present) mutations."""
+        queries, mutations = registry.subtree_fields(path)
+        docs: list[FieldDoc] = []
+        for owner, name in sorted(queries):
+            f = index.get((owner, name))
+            if f is not None:
+                docs.append(FieldDoc(**_field_brief(name, f), operation="query"))
+        for owner, name in sorted(mutations):
+            f = mutation_index_all.get((owner, name))
+            if f is not None:
+                docs.append(FieldDoc(**_field_brief(name, f), operation="mutation"))
+        return docs
+
+    @mcp.tool(annotations=READ_ONLY)
+    def search_fields(domain: str, query: str, top_k: int = 5) -> dict[str, Any]:
+        """BM25-search the fields of one domain by name and description.
+
+        Use this instead of reading get_query_schema when the domain is wide
+        and you already know what you are looking for. Field names come from
+        the API's endpoint function names, so developer vocabulary works
+        well (e.g. "invoice late fee", "shipment tracking").
+
+        Args:
+            domain: Domain path from list_domains, e.g. ``"billing"``.
+            query: Free-text query; matched against field name, description
+                and argument names.
+            top_k: Max results (1-20, default 5).
+
+        Returns:
+            dict with success/data: ranked {name, type, description, args?,
+            score, operation} results plus a hint.
+        """
+        path = _resolve(domain)
+        if path is None:
+            return _unknown_domain(domain, registry)
+        idx = search_index_cache.get(path)
+        if idx is None:
+            docs = _domain_docs(path)
+            if not docs:
+                return create_error_response(
+                    f"Domain '{domain}' has no GraphQL operations.",
+                    GQLMCPErrors.DOMAIN_NOT_FOUND,
+                    hint="Pick a domain from list_domains that carries operations.",
+                )
+            idx = FieldSearchIndex(docs)
+            search_index_cache[path] = idx
+        results = idx.search(query, top_k=min(max(top_k, 1), 20))
+        payload = {
+            "domain": domain,
+            "results": [
+                {**{k: v for k, v in doc.__dict__.items()},
+                 "score": round(score, 2)}
+                for doc, score in results
+            ],
+            "total_fields": len(idx._docs),  # noqa: SLF001 — same module family
+        }
+        if not results:
+            return create_success_response(
+                payload,
+                hint="No field matched. Try different terms, or call "
+                "list_queries(domain) to browse all fields.",
+            )
+        return create_success_response(
+            payload,
+            hint="Call get_query_schema(domain) for full type context, or go "
+            "straight to graphql_query (execution covers the full schema).",
+        )
 
     @mcp.tool(annotations=READ_ONLY)
     def list_queries(domain: str) -> dict[str, Any]:

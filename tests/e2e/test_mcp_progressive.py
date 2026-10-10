@@ -198,3 +198,69 @@ class TestToolAnnotations:
             tools = {t.name: t for t in await client.list_tools()}
         assert tools["list_domains"].annotations.read_only_hint is True
         assert tools["graphql_mutation"].annotations.destructive_hint is True
+
+
+class TestSearchFields:
+    async def test_search_hits_target_field(self, mcp):
+        async with Client(mcp.mcp) as client:
+            result = tool_payload(
+                await client.call_tool(
+                    "search_fields", {"domain": "iam", "query": "users"}
+                )
+            )
+        assert result["success"] is True
+        names = [r["name"] for r in result["data"]["results"]]
+        assert "list_users" in names
+        assert all(r["score"] > 0 for r in result["data"]["results"])
+        assert result["data"]["total_fields"] >= 2
+
+    async def test_search_covers_mutations(self, mcp):
+        async with Client(mcp.mcp) as client:
+            result = tool_payload(
+                await client.call_tool(
+                    "search_fields", {"domain": "iam", "query": "create users"}
+                )
+            )
+        ops = [r.get("operation") for r in result["data"]["results"]]
+        assert "mutation" in ops, ops  # create_user is reachable via search
+
+    async def test_search_no_match_returns_empty_with_hint(self, mcp):
+        async with Client(mcp.mcp) as client:
+            result = tool_payload(
+                await client.call_tool(
+                    "search_fields", {"domain": "billing", "query": "banana"}
+                )
+            )
+        assert result["success"] is True
+        assert result["data"]["results"] == []
+        assert "list_queries" in result["hint"]
+
+    async def test_search_unknown_domain(self, mcp):
+        async with Client(mcp.mcp) as client:
+            result = tool_payload(
+                await client.call_tool(
+                    "search_fields", {"domain": "nope", "query": "x"}
+                )
+            )
+        assert result["success"] is False
+        assert result["error_type"] == "domain_not_found"
+
+    async def test_search_top_k_bounded(self, mcp):
+        async with Client(mcp.mcp) as client:
+            result = tool_payload(
+                await client.call_tool(
+                    "search_fields",
+                    {"domain": "iam", "query": "users", "top_k": 1},
+                )
+            )
+        assert len(result["data"]["results"]) <= 1
+
+    async def test_search_description_terms_match(self, mcp):
+        """Terms from docstring descriptions (the arg-less brief text) hit."""
+        async with Client(mcp.mcp) as client:
+            result = tool_payload(
+                await client.call_tool(
+                    "search_fields", {"domain": "billing", "query": "invoices"}
+                )
+            )
+        assert result["data"]["results"], "billing has list_invoices, must match"

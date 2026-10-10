@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`search_fields(domain, query)`** (progressive mode): BM25 over field
+  names, descriptions and argument names — the shortcut for wide domains
+  where reading the whole fragment costs more than searching for the one
+  field you need. Field names come from endpoint function names (developer
+  vocabulary, keyword-dense), so lexical search lands well without
+  embeddings. Indexed lazily per domain, cached (schema is immutable).
+  Measured on a 324-route app: a 1,743-token domain fragment collapses to
+  a ~200-token search round trip.
+
 ## 0.11.1 (2026-10-10)
 
 ### Docs

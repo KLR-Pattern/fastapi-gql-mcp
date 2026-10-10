@@ -400,12 +400,13 @@ mcp = FastAPIMCP(
 ### Progressive disclosure (large apps)
 
 Above `progressive_threshold` routes (default 25, `mode="auto"`, counted
-after path and tag filtering), the toolset switches to a 4-layer walkthrough
+after path and tag filtering), the toolset switches to a 5-layer walkthrough
 of the tag tree:
 
 ```
 list_domains ──▶ list_queries("billing:invoice") ──▶ get_query_schema("billing:invoice") ──▶ graphql_query
                      (list_mutations with allow_mutation=True)
+                     search_fields("billing", "invoice late fee")   ← BM25 shortcut for wide domains
 ```
 
 Each domain SDL fragment re-wraps the real group types along the path, so it
