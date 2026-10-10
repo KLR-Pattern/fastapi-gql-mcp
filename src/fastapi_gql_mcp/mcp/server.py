@@ -98,7 +98,10 @@ class FastAPIMCP:
             through to ``FastMCP`` untouched: the MCP endpoint then answers
             401 with OAuth discovery metadata, and clients' Bearer tokens
             reach the routes via ``passthrough_headers`` like any other
-            caller's. The bridge itself verifies nothing.
+            caller's. The bridge itself verifies nothing. A bare
+            ``fastmcp.server.auth.auth.TokenVerifier`` subclass (override
+            ``verify_token``) gates the endpoint the same way, without the
+            OAuth machinery.
         mode: ``simple`` registers get_schema + graphql_query;
             ``progressive`` registers the 4-layer tag-based disclosure
             (list_domains -> list_queries -> get_query_schema ->

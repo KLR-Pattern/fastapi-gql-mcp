@@ -3,8 +3,10 @@
 [![pypi](https://img.shields.io/pypi/v/fastapi-gql-mcp.svg)](https://pypi.python.org/pypi/fastapi-gql-mcp)
 [![PyPI Downloads](https://static.pepy.tech/badge/fastapi-gql-mcp/month)](https://pepy.tech/projects/fastapi-gql-mcp)
 
-Turn any FastAPI router into a **GraphQL query layer + MCP server** — zero decorators,
-zero model changes.
+The **agent access layer for FastAPI** — agents call one `graphql_query`
+tool with full composition and per-caller credentials, instead of one tool
+per endpoint. The GraphQL layer + MCP server are derived from your existing
+app: zero decorators, zero model changes.
 
 ```python
 from fastapi import FastAPI
@@ -17,9 +19,6 @@ app = FastAPI()
 mcp = FastAPIMCP(app, name="my-app")
 mcp.run()  # HTTP MCP server with get_schema + graphql_query tools
 ```
-
-> `FastAPIMCP` was named `RouterMCP` through 0.8. The old import still works
-> as a deprecated alias (removed at 1.0) — switch to `FastAPIMCP`.
 
 **Contents** — [Why](#why) · [How it works](#how-it-works) ·
 [Capability boundaries](#capability-boundaries) · [Installation](#installation) · [Usage](#usage) · [Authentication](#authentication) ·
@@ -58,6 +57,13 @@ agents get:
   invisible truncation), with your selection shape repeating per level
   (up to the unroll limit — see *Rules worth knowing*)
 
+**Where it wins, and where it doesn't**: with many routes and long-lived
+agent sessions, the constant catalog dominates (at 100 routes: ~10,950 tok
+for a one-tool-per-endpoint bridge vs ~2,480 simple / ~1,480 progressive
+here). Below ~5 endpoints a flat tool list is smaller, and per-call latency
+favors the flat bridge (0.93 vs 1.25 ms p50) — agent turns dominate, so
+milliseconds rarely decide; catalog size does, as the API grows.
+
 ### Compared to the alternatives
 
 | Project | Tool count | Field selection | Composition | Setup |
@@ -83,11 +89,11 @@ fastapi-mcp 0.4.0 breaks on mcp 2.x):
 | same list response | 2,875 B whole payload | 610 B with field projection |
 | single trivial call (p50, same client stack, 3 runs) | **0.93 ms** | 1.25 ms — GraphQL layer costs; agent turns dominate, not ms |
 
-Honest counterexamples included: below ~5 endpoints the one-tool-per-endpoint
-catalog is actually smaller (685 vs 893 tok), and per-call latency favors
-them — the GraphQL route pays off as the API grows. Every number is
-reproducible (`comparison/README.md` → Reproduce); environment, versions and
-run counts are recorded in `results.json`.
+Two counterexamples from the same measurements: below ~5 endpoints the
+one-tool-per-endpoint catalog is smaller (685 vs 893 tok), and per-call
+latency favors the flat bridge — the GraphQL route pays off as the API
+grows. Every number is reproducible (`comparison/README.md` → Reproduce);
+environment, versions and run counts are recorded in `results.json`.
 </details>
 
 ## How it works
@@ -482,29 +488,77 @@ verifiers, and this bridge never holds or manages tokens of its own.
   they never become GraphQL arguments. The `POST /graphql` face (and
   GraphiQL) share the same whitelist, so browser sessions flow through it
   the same way. Wired example: [examples/notes_oauth](./examples/notes_oauth/).
+
+Client side, the credential is just a header on every MCP request:
+
+```bash
+# Claude Code
+claude mcp add --transport http my-api http://localhost:8000/mcp \
+  --header "authorization: Bearer <token>"
+# generic clients (mcp-remote bridge)
+npx mcp-remote http://localhost:8000/mcp --header "Authorization:${AUTH_HEADER}"
+```
+
 <details>
-<summary><b>No-credential behavior, machine callers, and MCP endpoint OAuth</b></summary>
+<summary><b>No-credential behavior, and machine callers without a user context</b></summary>
 
 - **Without credentials, protected routes fail** — field errors like
   `HTTP_401` in query results; nothing falls back to a server-side identity.
 - **Machines without a user context** configure the service credential on the
   MCP client side (or, for programmatic use, pass
   `handler.execute(..., headers={...})` directly).
-- **MCP endpoint OAuth (optional)**: pass a fastmcp auth provider —
-  `auth=GitHubProvider(client_id=..., client_secret=..., base_url=...)` — and
-  the MCP endpoint speaks OAuth 2.1: 401 discovery, dynamic client
-  registration, PKCE, a consent page, and its own reference tokens verifying
-  every call. Claude Code opens a browser, the user logs in, and the agent's
-  queries run as that user. `mount_to(app, "/mcp", auth_at_root=True)` hosts
-  the OAuth routes at the app root (for reusing an IdP app whose registered
-  callback lives there). The bridge itself still verifies nothing. Full
-  wired flow: [examples/notes_oauth](./examples/notes_oauth/).
 </details>
 
-Expose the MCP endpoint only behind an entrance you control (network, or a
-FastAPI `Depends` on the mounted route) — the bridge authenticates no one
-itself, and combine with `allow_mutation=False` / `mutation_include` to keep
-writes out of reach.
+### Gating the MCP endpoint
+
+`auth=` also accepts a bare token verifier — subclass
+`fastmcp.server.auth.auth.TokenVerifier`, override `verify_token`, and the
+endpoint answers `401` (a `WWW-Authenticate: Bearer` challenge) for every
+request without a valid token:
+
+```python
+from fastmcp.server.auth.auth import TokenVerifier
+from mcp.server.auth.provider import AccessToken
+
+class SharedSecretVerifier(TokenVerifier):
+    """One shared token guards the MCP endpoint — no OAuth machinery."""
+
+    async def verify_token(self, token: str):
+        if token != "demo-secret":
+            return None  # None -> 401
+        return AccessToken(token=token, client_id="local", scopes=[], expires_at=None)
+
+mcp = FastAPIMCP(app, auth=SharedSecretVerifier())
+```
+
+One token, two checks: the gate verifies the endpoint, and the routes' own
+security schemes verify business calls — the same Bearer reaches them via
+`passthrough_headers`. A perimeter you already control (network ACL,
+gateway auth on the `/mcp` path) works too. Combine with
+`allow_mutation=False` / `mutation_include` to keep writes out of reach.
+
+### MCP endpoint OAuth
+
+Pass a fastmcp auth provider and the MCP endpoint speaks OAuth 2.1: 401
+discovery, dynamic client registration, PKCE, a consent page, and its own
+reference tokens verifying every call:
+
+```python
+mcp = FastAPIMCP(app, auth=GitHubProvider(client_id=..., client_secret=..., base_url=...))
+```
+
+Ready-made providers: GitHub, Google, Auth0, Keycloak, AWS, Azure, Clerk,
+Discord, Supabase, WorkOS, and more — plus `JWTVerifier` (verify an external
+IdP's JWTs via JWKS) and `OAuthProxy` (adapt any upstream OAuth server).
+Full list and configuration: [fastmcp auth
+docs](https://gofastmcp.com/servers/auth).
+
+With a full provider, no `--header` is needed: Claude Code follows the 401
+OAuth discovery, opens a browser, the user logs in, and the agent's queries
+run as that user. `mount_to(app, "/mcp", auth_at_root=True)` hosts the OAuth
+routes at the app root (for reusing an IdP app whose registered callback
+lives there). The bridge itself still verifies nothing. Full wired flow:
+[examples/notes_oauth](./examples/notes_oauth/).
 
 ## Observability (OpenTelemetry)
 
@@ -625,8 +679,10 @@ uv run mypy src
 ## Status
 
 0.x — breaking changes can land in minor bumps; 1.0 will freeze the public
-API. See [CHANGELOG.md](CHANGELOG.md). Ideas welcome: GraphQL subscriptions
-over SSE routes, response header pass-through, per-domain auth scopes.
+API. See [CHANGELOG.md](CHANGELOG.md). Ideas welcome, agent-first: a
+`get_schema` variant that returns only the subgraph an agent asks about,
+response shaping for token budgets, per-team scoped deployments (one MCP
+deployment per tag set), response header pass-through.
 
 Design extracted from [nexusx](https://github.com/KLR-Pattern/nexusx)
 (SQLModel → GraphQL → MCP), rebuilt on graphql-core standard execution.
