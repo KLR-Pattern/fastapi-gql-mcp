@@ -14,6 +14,7 @@ import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from typing import Any
 
 _K1 = 1.5
 _B = 0.75
@@ -32,7 +33,7 @@ class FieldDoc:
     name: str
     type: str
     description: str = ""
-    args: list[dict] = field(default_factory=list)
+    args: list[dict[str, Any]] = field(default_factory=list)
     operation: str = "query"  # or "mutation"
 
     @property
