@@ -20,10 +20,19 @@ mcp = FastAPIMCP(app, name="my-app")
 mcp.run()  # HTTP MCP server with get_schema + graphql_query tools
 ```
 
-**Contents** — [Why](#why) · [How it works](#how-it-works) ·
-[Capability boundaries](#capability-boundaries) · [Installation](#installation) · [Usage](#usage) · [Authentication](#authentication) ·
+**Contents** — [Installation](#installation) · [Why](#why) ·
+[How it works](#how-it-works) · [Capability boundaries](#capability-boundaries) · [Usage](#usage) · [Authentication](#authentication) ·
 [Observability](#observability-opentelemetry) · [Hardening](#hardening-the-bridge) ·
 [Demo](#demo) · [Development](#development) · [Status](#status)
+
+## Installation
+
+Requires Python >= 3.10.
+
+```bash
+uv add fastapi-gql-mcp            # core: GraphQL handler
+uv add 'fastapi-gql-mcp[mcp]'     # + MCP server (fastmcp)
+```
 
 ## Why
 
@@ -329,15 +338,6 @@ report.degraded_fields  # tuple[(Model.field, reason), ...] — unions and unmap
 mcp.handler.readiness()
 ```
 </details>
-
-## Installation
-
-Requires Python >= 3.10.
-
-```bash
-uv add fastapi-gql-mcp            # core: GraphQL handler
-uv add 'fastapi-gql-mcp[mcp]'     # + MCP server (fastmcp)
-```
 
 ## Usage
 
