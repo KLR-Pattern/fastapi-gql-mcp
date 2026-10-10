@@ -67,17 +67,17 @@ agents get:
   (up to the unroll limit — see *Rules worth knowing*)
 
 **Where it wins, and where it doesn't**: with many routes and long-lived
-agent sessions, the constant catalog dominates (at 100 routes: ~10,950 tok
-for a one-tool-per-endpoint bridge vs ~2,480 simple / ~1,480 progressive
-here). Below ~5 endpoints a flat tool list is smaller, and per-call latency
-favors the flat bridge (0.93 vs 1.25 ms p50) — agent turns dominate, so
-milliseconds rarely decide; catalog size does, as the API grows.
+agent sessions, the constant catalog dominates (at 100 routes: ~15,400 tok
+for a one-tool-per-endpoint OpenAPI bridge vs ~2,480 simple / ~1,510
+progressive here — smaller at every measured size). Single-call latency is
+statistically tied with the flat bridge (1.39 vs 1.41 ms p50, same client
+stack), and the flat bridge needs no GraphQL mental model and works on any
+OpenAPI spec — but agent turns dominate, and composition collapses turns.
 
 ### Compared to the alternatives
 
 | Project | Tool count | Field selection | Composition | Setup |
 |---|---|---|---|---|
-| [fastapi-mcp](https://github.com/tadata-org/fastapi_mcp) (Tadata) | one per endpoint | ✗ | ✗ | none |
 | [FastMCP.from_openapi](https://gofastmcp.com/servers/openapi) | one per endpoint | ✗ | ✗ | none |
 | **fastapi-gql-mcp** | 2-6, constant | ✓ | ✓ | none |
 
@@ -88,21 +88,24 @@ guidance, all measured on one shared app: **[comparison/](./comparison/)**.
 <summary><b>What the comparison measures</b> (numbers below are real, from <code>comparison/bench/results.json</code>)</summary>
 
 One app (`bench/shared_app.py`, a notes CRUD API), wired into both bridges,
-driven from two venvs (they can't share one — fastmcp 4 needs mcp>=2,
-fastapi-mcp 0.4.0 breaks on mcp 2.x):
+driven from two venvs on identical stacks (fastmcp 4.1.0, fastapi 0.143.0,
+same in-memory client; their tool calls ride an in-process ASGI httpx
+client, ours invoke routes in-process):
 
-| Measurement | fastapi-mcp | fastapi-gql-mcp |
+| Measurement | FastMCP.from_openapi | fastapi-gql-mcp |
 |---|---|---|
-| tool catalog, 100 routes | ~10,950 tok (grows linearly) | ~2,480 tok simple / **~1,480 tok progressive (constant)** |
-| composed task (notes+stats) | 2 tool calls = 2 agent turns | 1 `graphql_query` |
-| same list response | 2,875 B whole payload | 610 B with field projection |
-| single trivial call (p50, same client stack, 3 runs) | **0.93 ms** | 1.25 ms — GraphQL layer costs; agent turns dominate, not ms |
+| tool catalog, 100 routes | ~15,400 tok (grows linearly, ~153 tok/route) | ~2,480 tok simple / **~1,510 tok progressive (constant)** |
+| composed task (notes+stats) | **2 tool calls = 2 agent turns**, 2.35 ms | **1 `graphql_query`**, 1.69 ms |
+| same list response | 2,285 B whole payload | 2,341 B full / **610 B with field projection** |
+| single trivial call (p50, same client stack, 3 runs) | 1.41 ms | 1.39 ms — statistically tied; agent turns dominate, not ms |
 
-Two counterexamples from the same measurements: below ~5 endpoints the
-one-tool-per-endpoint catalog is smaller (685 vs 893 tok), and per-call
-latency favors the flat bridge — the GraphQL route pays off as the API
-grows. Every number is reproducible (`comparison/README.md` → Reproduce);
-environment, versions and run counts are recorded in `results.json`.
+Honest counterexamples from the same measurements: at ~5 routes the catalog
+gap is small (1,075 vs 891 tok) and progressive disclosure costs MORE up
+front (1,467 tok — it pays off from ~25 routes); and `from_openapi` needs
+no GraphQL mental model, and works on any OpenAPI spec in any language —
+we are FastAPI-only. Every number is reproducible
+(`comparison/README.md` → Reproduce); environment, versions and run counts
+are recorded in `results.json`.
 </details>
 
 ## How it works

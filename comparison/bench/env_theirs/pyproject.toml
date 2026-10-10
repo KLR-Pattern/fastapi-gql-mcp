@@ -1,16 +1,10 @@
 [project]
 name = "bench-env-theirs"
 version = "0.0.0"
-description = "fastapi-mcp (tadata) side of the comparison benchmark"
+description = "FastMCP.from_openapi side of the comparison benchmark"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115",
     "httpx>=0.27",
-    "fastapi-mcp>=0.4",
-    # fastapi-mcp 0.4.0 pins mcp>=1.12 with NO upper bound but breaks on
-    # mcp 2.x (lowlevel Server signature change) — pinned here so it runs.
-    "mcp>=1.12,<2",
+    "fastmcp>=4,<5",
 ]
-
-[tool.uv.sources]
-fastapi-mcp = { path = "../../../../fastapi-mcp", editable = true }

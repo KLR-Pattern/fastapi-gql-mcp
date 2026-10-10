@@ -6,6 +6,9 @@ Run from bench/:  python3 merge_results.py
 from __future__ import annotations
 
 import json
+import platform
+import subprocess
+from datetime import date
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -15,45 +18,42 @@ def tok(b: int) -> int:
     return b // 4
 
 
+def cpu_name() -> str:
+    if platform.system() == "Darwin":
+        return subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"],
+            capture_output=True, text=True,
+        ).stdout.strip()
+    # Linux: first Model line from /proc/cpuinfo
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor() or "unknown"
+
+
 def main() -> None:
     ours = json.loads((HERE / "results_ours.json").read_text())
     theirs = json.loads((HERE / "results_theirs.json").read_text())
 
-    import platform
-    import subprocess
-
-    def pkg(name, project):
-        import importlib.metadata as md
-        try:
-            return md.version(name)
-        except importlib.metadata.PackageNotFoundError:
-            return "n/a"
-
-    cpu = subprocess.run(
-        ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True
-    ).stdout.strip()
-    theirs_commit = subprocess.run(
-        ["git", "-C", str(HERE.parent.parent.parent / "fastapi-mcp"), "rev-parse", "--short", "HEAD"],
-        capture_output=True, text=True,
-    ).stdout.strip()
+    import sys
 
     results = {
         "method": {
-            "hardware": f"{cpu}, {platform.mac_ver()[0]}",
-            "python": "3.12.11",
-            "date": "2026-10-04",
+            "hardware": cpu_name(),
+            "python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            "date": str(date.today()),
             "versions": {
-                "ours": {"fastapi-gql-mcp": "0.4.0", "fastmcp": "4.0.10",
-                          "mcp": "2.3.0", "graphql-core": "3.3.0", "fastapi": "0.142.2"},
-                "theirs": {"fastapi-mcp": f"0.4.0 (clone @ {theirs_commit}, v0.4.0+3 docs-only)",
-                            "mcp": "1.30.0", "fastapi": "0.142.2"},
+                # recorded by each runner inside its own venv
+                "ours": ours["versions"],
+                "theirs": theirs["versions"],
             },
             "catalog": "JSON bytes of the tools/list payload (full model_dump both sides); tokens = bytes/4",
             "latency": "in-memory MCP sessions, 200 iters x 3 runs, medians reported; "
-            "ours quoted from the raw mcp-SDK client variant (same stack as theirs); "
-            "fastmcp-client variant recorded separately",
-            "envs": "two separate venvs — fastmcp 4 requires mcp>=2, "
-            "fastapi-mcp 0.4.0 breaks on mcp 2.x (Server signature change)",
+            "both sides driven by the fastmcp in-memory Client (same stack)",
+            "envs": "two separate venvs for process isolation; both on fastmcp 4",
         },
         "catalog": [],
         "composition": {"ours": ours["composition"], "theirs": theirs["composition"]},

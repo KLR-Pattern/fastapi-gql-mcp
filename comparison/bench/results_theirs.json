@@ -1,60 +1,65 @@
 {
+  "versions": {
+    "fastmcp": "4.1.0",
+    "fastapi": "0.143.0",
+    "httpx": "0.28.1"
+  },
   "catalog": [
     {
       "routes": 5,
       "tool_count": 5,
-      "catalog_bytes": 2743
+      "catalog_bytes": 4300
     },
     {
       "routes": 10,
       "tool_count": 10,
-      "catalog_bytes": 4878
+      "catalog_bytes": 7294
     },
     {
       "routes": 25,
       "tool_count": 25,
-      "catalog_bytes": 11343
+      "catalog_bytes": 16309
     },
     {
       "routes": 50,
       "tool_count": 50,
-      "catalog_bytes": 22168
+      "catalog_bytes": 31370
     },
     {
       "routes": 100,
       "tool_count": 100,
-      "catalog_bytes": 43818
+      "catalog_bytes": 61509
     }
   ],
   "composition": {
     "tool_calls": 2,
     "runs": 3,
     "mean_ms_per_run": [
-      1.44,
-      1.41,
-      1.39
+      2.53,
+      2.33,
+      2.35
     ],
-    "mean_ms": 1.41
+    "mean_ms": 2.35
   },
   "latency": {
     "runs": 3,
-    "p50_ms": 0.93,
-    "p95_ms": 1.0,
+    "p50_ms": 1.41,
+    "p95_ms": 1.54,
     "spread_p50_ms": [
-      0.93,
-      0.93,
-      0.92
+      1.41,
+      1.41,
+      1.42
     ]
   },
   "response_size": {
     "note_count": 20,
-    "full_bytes": 2875
+    "full_bytes": 2285
   },
   "error_semantics": {
-    "isError": true,
-    "text": "Error calling get_note_api_notes__note_id__get. Status code: 404. Response: {\"detail\":\"note not found\"}"
+    "raises": true,
+    "text": "Error calling tool 'get_note_api_notes': HTTP error 404: Not Found - {'detail': 'note not found'}"
   },
-  "fidelity_tool_description": "List Notes\n\nList YOUR notes.\n\n``q`` filters by substring over title and body.\n\n### Responses:\n\n**200**: Successful Response (Success Response)\nContent-Type: application/json\n\n**Example Response:**\n```json\n[\n  {\n    \"id\": 1,\n    \"title\": \"Title\",\n    \"body\": \"Body\",\n    \"owner\": \"Owner\"\n  }\n]\n```",
+  "fidelity_tool_description": "List YOUR notes.\n\n``q`` filters by substring over title and body.",
   "fidelity_input_schema": {
     "type": "object",
     "properties": {
@@ -67,16 +72,15 @@
             "type": "null"
           }
         ],
-        "description": "substring over title/body",
-        "title": "q",
-        "type": "string"
+        "title": "Q",
+        "description": "substring over title/body"
       },
       "active": {
         "type": "boolean",
-        "default": true,
-        "title": "active"
+        "title": "Active",
+        "default": true
       }
     },
-    "title": "list_notes_api_notes_getArguments"
+    "required": []
   }
 }

@@ -1,25 +1,25 @@
 {
   "method": {
-    "hardware": "Apple M3, 15.7.3",
-    "python": "3.12.11",
-    "date": "2026-10-04",
+    "hardware": "13th Gen Intel(R) Core(TM) i5-13500H",
+    "python": "3.14.5",
+    "date": "2026-10-10",
     "versions": {
       "ours": {
-        "fastapi-gql-mcp": "0.4.0",
-        "fastmcp": "4.0.10",
+        "fastapi-gql-mcp": "0.11.1",
+        "fastmcp": "4.1.0",
         "mcp": "2.3.0",
         "graphql-core": "3.3.0",
-        "fastapi": "0.142.2"
+        "fastapi": "0.143.0"
       },
       "theirs": {
-        "fastapi-mcp": "0.4.0 (clone @ e5cad13, v0.4.0+3 docs-only)",
-        "mcp": "1.30.0",
-        "fastapi": "0.142.2"
+        "fastmcp": "4.1.0",
+        "fastapi": "0.143.0",
+        "httpx": "0.28.1"
       }
     },
     "catalog": "JSON bytes of the tools/list payload (full model_dump both sides); tokens = bytes/4",
-    "latency": "in-memory MCP sessions, 200 iters x 3 runs, medians reported; ours quoted from the raw mcp-SDK client variant (same stack as theirs); fastmcp-client variant recorded separately",
-    "envs": "two separate venvs — fastmcp 4 requires mcp>=2, fastapi-mcp 0.4.0 breaks on mcp 2.x (Server signature change)"
+    "latency": "in-memory MCP sessions, 200 iters x 3 runs, medians reported; both sides driven by the fastmcp in-memory Client (same stack)",
+    "envs": "two separate venvs for process isolation; both on fastmcp 4"
   },
   "catalog": [
     {
@@ -27,26 +27,26 @@
       "theirs": {
         "routes": 5,
         "tool_count": 5,
-        "catalog_bytes": 2743,
-        "catalog_tokens": 685
+        "catalog_bytes": 4300,
+        "catalog_tokens": 1075
       },
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 2324,
+        "catalog_bytes": 2318,
         "sdl_bytes": 1249,
-        "full_context_bytes": 3573,
-        "full_context_tokens": 893,
-        "catalog_tokens": 581
+        "full_context_bytes": 3567,
+        "full_context_tokens": 891,
+        "catalog_tokens": 579
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 3523,
+        "catalog_bytes": 3658,
         "discovery_domains_bytes": 267,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5735,
-        "discovery_total_tokens": 1433,
-        "catalog_tokens": 880
+        "discovery_total_bytes": 5870,
+        "discovery_total_tokens": 1467,
+        "catalog_tokens": 914
       }
     },
     {
@@ -54,26 +54,26 @@
       "theirs": {
         "routes": 10,
         "tool_count": 10,
-        "catalog_bytes": 4878,
-        "catalog_tokens": 1219
+        "catalog_bytes": 7294,
+        "catalog_tokens": 1823
       },
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 2324,
+        "catalog_bytes": 2318,
         "sdl_bytes": 1838,
-        "full_context_bytes": 4162,
-        "full_context_tokens": 1040,
-        "catalog_tokens": 581
+        "full_context_bytes": 4156,
+        "full_context_tokens": 1039,
+        "catalog_tokens": 579
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 3523,
+        "catalog_bytes": 3658,
         "discovery_domains_bytes": 434,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5902,
-        "discovery_total_tokens": 1475,
-        "catalog_tokens": 880
+        "discovery_total_bytes": 6037,
+        "discovery_total_tokens": 1509,
+        "catalog_tokens": 914
       }
     },
     {
@@ -81,26 +81,26 @@
       "theirs": {
         "routes": 25,
         "tool_count": 25,
-        "catalog_bytes": 11343,
-        "catalog_tokens": 2835
+        "catalog_bytes": 16309,
+        "catalog_tokens": 4077
       },
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 2324,
+        "catalog_bytes": 2318,
         "sdl_bytes": 2788,
-        "full_context_bytes": 5112,
-        "full_context_tokens": 1278,
-        "catalog_tokens": 581
+        "full_context_bytes": 5106,
+        "full_context_tokens": 1276,
+        "catalog_tokens": 579
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 3523,
+        "catalog_bytes": 3658,
         "discovery_domains_bytes": 435,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5903,
-        "discovery_total_tokens": 1475,
-        "catalog_tokens": 880
+        "discovery_total_bytes": 6038,
+        "discovery_total_tokens": 1509,
+        "catalog_tokens": 914
       }
     },
     {
@@ -108,26 +108,26 @@
       "theirs": {
         "routes": 50,
         "tool_count": 50,
-        "catalog_bytes": 22168,
-        "catalog_tokens": 5542
+        "catalog_bytes": 31370,
+        "catalog_tokens": 7842
       },
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 2324,
+        "catalog_bytes": 2318,
         "sdl_bytes": 4388,
-        "full_context_bytes": 6712,
-        "full_context_tokens": 1678,
-        "catalog_tokens": 581
+        "full_context_bytes": 6706,
+        "full_context_tokens": 1676,
+        "catalog_tokens": 579
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 3523,
+        "catalog_bytes": 3658,
         "discovery_domains_bytes": 436,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5904,
-        "discovery_total_tokens": 1476,
-        "catalog_tokens": 880
+        "discovery_total_bytes": 6039,
+        "discovery_total_tokens": 1509,
+        "catalog_tokens": 914
       }
     },
     {
@@ -135,26 +135,26 @@
       "theirs": {
         "routes": 100,
         "tool_count": 100,
-        "catalog_bytes": 43818,
-        "catalog_tokens": 10954
+        "catalog_bytes": 61509,
+        "catalog_tokens": 15377
       },
       "ours_simple": {
         "tool_count": 3,
-        "catalog_bytes": 2324,
+        "catalog_bytes": 2318,
         "sdl_bytes": 7588,
-        "full_context_bytes": 9912,
-        "full_context_tokens": 2478,
-        "catalog_tokens": 581
+        "full_context_bytes": 9906,
+        "full_context_tokens": 2476,
+        "catalog_tokens": 579
       },
       "ours_progressive": {
         "tool_count": 6,
-        "catalog_bytes": 3523,
+        "catalog_bytes": 3658,
         "discovery_domains_bytes": 436,
         "discovery_list_bytes": 615,
         "discovery_fragment_bytes": 1330,
-        "discovery_total_bytes": 5904,
-        "discovery_total_tokens": 1476,
-        "catalog_tokens": 880
+        "discovery_total_bytes": 6039,
+        "discovery_total_tokens": 1509,
+        "catalog_tokens": 914
       }
     }
   ],
@@ -163,22 +163,22 @@
       "tool_calls": 1,
       "runs": 3,
       "mean_ms_per_run": [
-        1.88,
-        1.77,
-        1.81
+        1.74,
+        1.69,
+        1.67
       ],
-      "mean_ms": 1.81,
+      "mean_ms": 1.69,
       "p95_ms": null
     },
     "theirs": {
       "tool_calls": 2,
       "runs": 3,
       "mean_ms_per_run": [
-        1.44,
-        1.41,
-        1.39
+        2.53,
+        2.33,
+        2.35
       ],
-      "mean_ms": 1.41
+      "mean_ms": 2.35
     }
   },
   "latency": {
@@ -186,33 +186,33 @@
       "runs": 3,
       "ours_fastmcp_client": {
         "p50_ms": 1.39,
-        "p95_ms": 1.93
+        "p95_ms": 1.69
       },
       "ours_raw_sdk_client": {
-        "p50_ms": 1.25,
-        "p95_ms": 1.79
+        "p50_ms": 1.23,
+        "p95_ms": 1.48
       },
       "spread_p50_ms": {
         "fastmcp": [
-          1.38,
+          1.4,
           1.39,
-          1.39
+          1.38
         ],
         "raw_sdk": [
-          1.25,
-          1.24,
-          1.26
+          1.23,
+          1.23,
+          1.24
         ]
       }
     },
     "theirs": {
       "runs": 3,
-      "p50_ms": 0.93,
-      "p95_ms": 1.0,
+      "p50_ms": 1.41,
+      "p95_ms": 1.54,
       "spread_p50_ms": [
-        0.93,
-        0.93,
-        0.92
+        1.41,
+        1.41,
+        1.42
       ]
     }
   },
@@ -224,7 +224,7 @@
     },
     "theirs": {
       "note_count": 20,
-      "full_bytes": 2875
+      "full_bytes": 2285
     }
   },
   "error_semantics": {
@@ -266,13 +266,13 @@
       }
     },
     "theirs": {
-      "isError": true,
-      "text": "Error calling get_note_api_notes__note_id__get. Status code: 404. Response: {\"detail\":\"note not found\"}"
+      "raises": true,
+      "text": "Error calling tool 'get_note_api_notes': HTTP error 404: Not Found - {'detail': 'note not found'}"
     }
   },
   "fidelity": {
     "ours_sdl_fragment": "type NotesMineQuery {\n  \"\"\"\n  List YOUR notes.\n  \n  ``q`` filters by substring over title and body.\n  \"\"\"\n  list_notes(\n    \"\"\"substring over title/body\"\"\"\n    q: String = null\n    active: Boolean = true\n  ): [NoteOut!]\n\n  \"\"\"Fetch one of YOUR notes by id.\"\"\"\n  get_note(note_id: Int!): NoteOut\n}\n\n\"\"\"A note owned by the logged-in user.\"\"\"",
-    "theirs_tool_description": "List Notes\n\nList YOUR notes.\n\n``q`` filters by substring over title and body.\n\n### Responses:\n\n**200**: Successful Response (Success Response)\nContent-Type: application/json\n\n**Example Response:**\n```json\n[\n  {\n    \"id\": 1,\n    \"title\": \"Title\",\n    \"body\": \"Body\",\n    \"owner\": \"Owner\"\n  }\n]\n```",
+    "theirs_tool_description": "List YOUR notes.\n\n``q`` filters by substring over title and body.",
     "theirs_input_schema": {
       "type": "object",
       "properties": {
@@ -285,17 +285,16 @@
               "type": "null"
             }
           ],
-          "description": "substring over title/body",
-          "title": "q",
-          "type": "string"
+          "title": "Q",
+          "description": "substring over title/body"
         },
         "active": {
           "type": "boolean",
-          "default": true,
-          "title": "active"
+          "title": "Active",
+          "default": true
         }
       },
-      "title": "list_notes_api_notes_getArguments"
+      "required": []
     }
   }
 }

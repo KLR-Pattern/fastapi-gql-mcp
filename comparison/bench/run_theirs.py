@@ -1,25 +1,23 @@
-"""fastapi-mcp (tadata) half of the benchmark. Writes results_theirs.json.
+"""FastMCP.from_openapi half of the benchmark. Writes results_theirs.json.
 
 Run from bench/:  uv run --project env_theirs python run_theirs.py
 
-Client = raw mcp SDK ClientSession over in-memory streams (their stack has
-no fastmcp); ours uses fastmcp's in-memory client — both bypass network.
+The "theirs" side is fastmcp's OpenAPI bridge — the mainstream way to expose
+an existing API as MCP tools today. The app's own OpenAPI spec feeds
+``FastMCP.from_openapi``; tool calls ride an in-process ASGI httpx client,
+so both sides measure the same in-process shape (no network either way).
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import statistics
 import time
 from pathlib import Path
 
-import mcp.types as types
-from mcp.client.session import ClientSession
-from mcp.shared.memory import create_client_server_memory_streams
-
-from fastapi_mcp import FastApiMCP
+import httpx
+from fastmcp import Client, FastMCP
 
 from shared_app import NOTES, build_app
 
@@ -34,69 +32,59 @@ def pct(sorted_ms: list[float], p: float) -> float:
     return sorted_ms[min(len(sorted_ms) - 1, int(len(sorted_ms) * p))]
 
 
-@contextlib.asynccontextmanager
-async def session(server):
-    async with create_client_server_memory_streams() as (client_streams, server_streams):
-        # mcp 1.x: Server.run is a plain coroutine — drive it in a task
-        server_task = asyncio.create_task(
-            server.run(
-                server_streams[0],
-                server_streams[1],
-                server.create_initialization_options(),
-                raise_exceptions=False,
-            )
-        )
-        try:
-            async with ClientSession(client_streams[0], client_streams[1]) as sess:
-                await sess.initialize()
-                yield sess
-        finally:
-            server_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await server_task
-
-
-def tool_name(mcp: FastApiMCP, prefix: str) -> str:
-    """Their names are FastAPI operationIds: list_notes_api_notes_get."""
-    return next(t.name for t in mcp.tools if t.name.startswith(prefix))
-
-
-async def call(sess: ClientSession, name: str, args: dict) -> str:
-    result = await sess.call_tool(name, args)
-    if result.isError:
-        raise RuntimeError(result.content[0].text if result.content else "tool error")
-    return result.content[0].text
+def openapi_bridge(app) -> FastMCP:
+    """The app's OpenAPI spec -> one MCP tool per operation."""
+    return FastMCP.from_openapi(
+        openapi_spec=app.openapi(),
+        client=httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://bench"
+        ),
+        name="bench-openapi",
+    )
 
 
 async def catalog_for(route_count: int) -> dict:
     app = build_app(route_count)
-    mcp = FastApiMCP(app)
-    payload = {"tools": [t.model_dump(exclude_none=True) for t in mcp.tools]}
+    mcp = openapi_bridge(app)
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    payload = {"tools": [t.model_dump(exclude_none=True) for t in tools]}
     return {
         "routes": route_count,
-        "tool_count": len(mcp.tools),
+        "tool_count": len(tools),
         "catalog_bytes": json_size(payload),
     }
 
 
 async def main() -> dict:
-    results: dict = {}
+    import importlib.metadata as md
+
+    results: dict = {
+        "versions": {
+            name: md.version(name)
+            for name in ("fastmcp", "fastapi", "httpx")
+        }
+    }
 
     print("== catalog ==")
     results["catalog"] = [await catalog_for(n) for n in [5, 10, 25, 50, 100]]
 
     app = build_app(5)
-    mcp = FastApiMCP(app)
+    mcp = openapi_bridge(app)
 
     print("== composition ==")
     run_means = []
     for _ in range(3):
-        async with session(mcp.server) as sess:
+        async with Client(mcp) as client:
+            tools = await client.list_tools()
+            names = {t.name: t for t in tools}
+            list_notes = next(n for n in names if n.startswith("list_notes"))
+            stats = next(n for n in names if n.startswith("stats"))
             times = []
             for _ in range(50):
                 t0 = time.perf_counter()
-                await call(sess, tool_name(mcp, "list_notes"), {"q": "note 1"})
-                await call(sess, tool_name(mcp, "stats"), {})
+                await client.call_tool(list_notes, {"q": "note 1"})
+                await client.call_tool(stats, {})
                 times.append((time.perf_counter() - t0) * 1000)
         run_means.append(round(statistics.mean(times), 2))
     results["composition"] = {
@@ -109,11 +97,13 @@ async def main() -> dict:
     print("== latency ==")
     runs = []
     for _ in range(3):
-        async with session(mcp.server) as sess:
+        async with Client(mcp) as client:
+            tools = await client.list_tools()
+            list_notes = next(t.name for t in tools if t.name.startswith("list_notes"))
             times = []
             for _ in range(200):
                 t0 = time.perf_counter()
-                await call(sess, tool_name(mcp, "list_notes"), {})
+                await client.call_tool(list_notes, {})
                 times.append((time.perf_counter() - t0) * 1000)
         runs.append(sorted(times))
 
@@ -128,25 +118,29 @@ async def main() -> dict:
     }
 
     print("== response size ==")
-    async with session(mcp.server) as sess:
-        text = await call(sess, tool_name(mcp, "list_notes"), {})
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+        list_notes = next(t.name for t in tools if t.name.startswith("list_notes"))
+        result = await client.call_tool(list_notes, {})
+    text = result.content[0].text if result.content else ""
     results["response_size"] = {"note_count": len(NOTES), "full_bytes": len(text.encode())}
 
     print("== error semantics ==")
-    async with session(mcp.server) as sess:
-        result = await sess.call_tool(tool_name(mcp, "get_note"), {"note_id": 9999})
-        if result.isError:
-            results["error_semantics"] = {
-                "isError": True,
-                "text": result.content[0].text[:400] if result.content else "",
-            }
-        else:
-            results["error_semantics"] = {"isError": False, "text": result.content[0].text[:400]}
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+        get_note = next(t.name for t in tools if t.name.startswith("get_note"))
+        try:
+            await client.call_tool(get_note, {"note_id": 9999})
+            results["error_semantics"] = {"raises": False, "text": ""}
+        except Exception as exc:  # fastmcp raises ToolError on HTTP >= 400
+            results["error_semantics"] = {"raises": True, "text": str(exc)[:400]}
 
     print("== fidelity ==")
-    tool = next(t for t in mcp.tools if t.name.startswith("list_notes"))
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+        tool = next(t for t in tools if t.name.startswith("list_notes"))
     results["fidelity_tool_description"] = tool.description
-    results["fidelity_input_schema"] = tool.inputSchema
+    results["fidelity_input_schema"] = tool.input_schema
 
     OUT.write_text(json.dumps(results, ensure_ascii=False, indent=2))
     print(f"wrote {OUT}")

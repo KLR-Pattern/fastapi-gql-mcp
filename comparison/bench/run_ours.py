@@ -114,7 +114,14 @@ async def catalog_for(route_count: int) -> dict:
 
 
 async def main() -> dict:
-    results: dict = {}
+    import importlib.metadata as md
+
+    results: dict = {
+        "versions": {
+            name: md.version(name)
+            for name in ("fastapi-gql-mcp", "fastmcp", "mcp", "graphql-core", "fastapi")
+        }
+    }
 
     print("== catalog ==")
     results["catalog"] = [await catalog_for(n) for n in [5, 10, 25, 50, 100]]
